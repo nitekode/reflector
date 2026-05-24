@@ -58,6 +58,15 @@ func pickDecoder(t reflect.Type) fieldDecoder {
 			f.SetBool(b)
 			return nil
 		}
+	case reflect.Float32, reflect.Float64:
+		return func(f reflect.Value, raw string) error {
+			n, err := strconv.ParseFloat(raw, t.Bits())
+			if err != nil {
+				return err
+			}
+			f.SetFloat(n)
+			return nil
+		}
 	default:
 		return func(f reflect.Value, raw string) error {
 			return ErrDecoderUnsupportedType{t}

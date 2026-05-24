@@ -3,6 +3,8 @@ package reflector
 import (
 	"errors"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -150,4 +152,85 @@ func TestCall(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCallWithStringDecoding(t *testing.T) {
+	funcCache.Clear()
+
+	add := func(a, b int) int { return a + b }
+	mix := func(enabled bool, ratio float64, name string) string {
+		return name + ":" + strconv.FormatBool(enabled) + ":" + strconv.FormatFloat(ratio, 'f', -1, 64)
+	}
+	sum := func(base int, nums ...int) int {
+		total := base
+		for _, num := range nums {
+			total += num
+		}
+		return total
+	}
+	takesSlice := func(values []string) int { return len(values) }
+
+	t.Run("fixed-arity decode", func(t *testing.T) {
+		got, err := Call(add, []any{"2", "3"}, WithStringDecoding())
+		if err != nil {
+			t.Fatalf("Call() error = %v", err)
+		}
+
+		if len(got) != 1 || got[0].Interface() != 5 {
+			t.Fatalf("Call() = %v, want [5]", got)
+		}
+	})
+
+	t.Run("mixed typed and decoded inputs", func(t *testing.T) {
+		got, err := Call(mix, []any{true, "1.5", "alice"}, WithStringDecoding())
+		if err != nil {
+			t.Fatalf("Call() error = %v", err)
+		}
+
+		if len(got) != 1 || got[0].Interface() != "alice:true:1.5" {
+			t.Fatalf("Call() = %v, want [alice:true:1.5]", got)
+		}
+	})
+
+	t.Run("variadic decode", func(t *testing.T) {
+		got, err := Call(sum, []any{"10", "1", "2", "3"}, WithStringDecoding())
+		if err != nil {
+			t.Fatalf("Call() error = %v", err)
+		}
+
+		if len(got) != 1 || got[0].Interface() != 16 {
+			t.Fatalf("Call() = %v, want [16]", got)
+		}
+	})
+
+	t.Run("strict by default", func(t *testing.T) {
+		_, err := Call(add, []any{"2", "3"})
+		if err == nil || err.Error() != "reflector: param 0 - expected int, got string" {
+			t.Fatalf("Call() error = %v, want strict type mismatch", err)
+		}
+	})
+
+	t.Run("unsupported decode type", func(t *testing.T) {
+		_, err := Call(takesSlice, []any{"a,b"}, WithStringDecoding())
+		var target ErrDecoderUnsupportedType
+		if !errors.As(err, &target) {
+			t.Fatalf("Call() error = %v, want ErrDecoderUnsupportedType", err)
+		}
+		if target.Type != reflect.TypeFor[[]string]() {
+			t.Fatalf("unsupported decoder type = %v, want []string", target.Type)
+		}
+	})
+
+	t.Run("invalid decode value", func(t *testing.T) {
+		_, err := Call(add, []any{"2", "three"}, WithStringDecoding())
+		if err == nil {
+			t.Fatal("Call() error = nil, want decode failure")
+		}
+		if !strings.Contains(err.Error(), "param 1") {
+			t.Fatalf("Call() error = %q, want param context", err.Error())
+		}
+		if !strings.Contains(err.Error(), "invalid syntax") {
+			t.Fatalf("Call() error = %q, want parse failure", err.Error())
+		}
+	})
 }

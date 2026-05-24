@@ -12,6 +12,7 @@ type funcParamInfo struct {
 	Index      int
 	Type       reflect.Type
 	IsVariadic bool
+	Decode     fieldDecoder
 }
 
 type funcInfo struct {
@@ -20,6 +21,18 @@ type funcInfo struct {
 	Returns    []reflect.Type
 	IsVariadic bool
 	MinArgs    int
+}
+
+type callOptions struct {
+	stringDecoding bool
+}
+
+type CallOption func(*callOptions)
+
+func WithStringDecoding() CallOption {
+	return func(opts *callOptions) {
+		opts.stringDecoding = true
+	}
 }
 
 func InspectFunc(fn any) (fi funcInfo, err error) {
@@ -42,8 +55,9 @@ func InspectFunc(fn any) (fi funcInfo, err error) {
 	fi.Params = make([]funcParamInfo, typ.NumIn())
 	for i := 0; i < typ.NumIn(); i++ {
 		fi.Params[i] = funcParamInfo{
-			Index: i,
-			Type:  typ.In(i),
+			Index:  i,
+			Type:   typ.In(i),
+			Decode: pickDecoder(typ.In(i)),
 		}
 	}
 
@@ -61,6 +75,7 @@ func InspectFunc(fn any) (fi funcInfo, err error) {
 
 		// Set the last param as variadic
 		fi.Params[len(fi.Params)-1].IsVariadic = true
+		fi.Params[len(fi.Params)-1].Decode = pickDecoder(fi.Params[len(fi.Params)-1].Type.Elem())
 	}
 
 	// Put the inspected func in the cache and prime it
@@ -69,10 +84,17 @@ func InspectFunc(fn any) (fi funcInfo, err error) {
 	return
 }
 
-func Call(fn any, inputs []any) ([]reflect.Value, error) {
+func Call(fn any, inputs []any, opts ...CallOption) ([]reflect.Value, error) {
 	fi, err := InspectFunc(fn)
 	if err != nil {
 		return nil, err
+	}
+
+	var callOpts callOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&callOpts)
+		}
 	}
 
 	if fi.IsVariadic && len(inputs) < fi.MinArgs {
@@ -96,6 +118,16 @@ func Call(fn any, inputs []any) ([]reflect.Value, error) {
 		expectedType := pi.Type
 		if pi.IsVariadic {
 			expectedType = pi.Type.Elem() // []string -> string
+		}
+
+		if callOpts.stringDecoding {
+			if raw, ok := input.(string); ok && !value.Type().AssignableTo(expectedType) {
+				value = reflect.New(expectedType).Elem()
+				err = pi.Decode(value, raw)
+				if err != nil {
+					return nil, fmt.Errorf("reflector: param %d - failed to decode string as %s: %w", i, expectedType, err)
+				}
+			}
 		}
 
 		if !value.Type().AssignableTo(expectedType) {

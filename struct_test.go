@@ -187,6 +187,7 @@ func TestNewStruct(t *testing.T) {
 		Name   string
 		Age    int
 		Active bool
+		Score  float64
 		hidden string
 	}
 
@@ -194,6 +195,7 @@ func TestNewStruct(t *testing.T) {
 		"Name":   "alice",
 		"Age":    "42",
 		"Active": "true",
+		"Score":  "12.5",
 		"hidden": "ignored",
 	})
 	if err != nil {
@@ -204,6 +206,7 @@ func TestNewStruct(t *testing.T) {
 		Name:   "alice",
 		Age:    42,
 		Active: true,
+		Score:  12.5,
 	}
 	if got != want {
 		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
