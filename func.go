@@ -6,14 +6,7 @@ import (
 	"sync"
 )
 
-var (
-	funcCache         sync.Map
-	funcCacheDisabled bool
-)
-
-func DisableFuncCache() {
-	funcCacheDisabled = true
-}
+var funcCache sync.Map
 
 type funcParamInfo struct {
 	Index      int
@@ -37,11 +30,9 @@ func InspectFunc(fn any) (fi funcInfo, err error) {
 	fi.Value = reflect.ValueOf(fn)
 	typ := fi.Value.Type()
 
-	if !funcCacheDisabled {
-		// Check if this func has already been inspected and is in the cache
-		if fi, found := funcCache.Load(typ); found {
-			return fi.(funcInfo), nil
-		}
+	// Check if this func has already been inspected and is in the cache
+	if fi, found := funcCache.Load(typ); found {
+		return fi.(funcInfo), nil
 	}
 
 	if typ.Kind() != reflect.Func {
@@ -72,10 +63,8 @@ func InspectFunc(fn any) (fi funcInfo, err error) {
 		fi.Params[len(fi.Params)-1].IsVariadic = true
 	}
 
-	if !funcCacheDisabled {
-		// Put the inspected func in the cache and prime it
-		funcCache.LoadOrStore(typ, fi)
-	}
+	// Put the inspected func in the cache and prime it
+	funcCache.LoadOrStore(typ, fi)
 
 	return
 }
