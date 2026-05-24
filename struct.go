@@ -8,14 +8,7 @@ import (
 	"sync"
 )
 
-var (
-	structCache         sync.Map
-	structCacheDisabled bool
-)
-
-func DisableStructCache() {
-	structCacheDisabled = true
-}
+var structCache sync.Map
 
 type structFieldInfo struct {
 	Index       int
@@ -48,11 +41,9 @@ func InspectStruct(s any) (si structInfo, err error) {
 		typ = typ.Elem()
 	}
 
-	if !structCacheDisabled {
-		// Check if this struct has already been inspected and is in the cache
-		if si, found := structCache.Load(typ); found {
-			return si.(structInfo), nil
-		}
+	// Check if this struct has already been inspected and is in the cache
+	if si, found := structCache.Load(typ); found {
+		return si.(structInfo), nil
 	}
 
 	if typ.Kind() != reflect.Struct {
@@ -77,17 +68,15 @@ func InspectStruct(s any) (si structInfo, err error) {
 			Encode:      pickEncoder(field.Type),
 			Decode:      pickDecoder(field.Type),
 		}
-		si.Fields = append(si.Fields, &fi)
+		si.Fields[i] = &fi
 
 		if fi.IsExported {
 			si.Exported = append(si.Exported, &fi)
 		}
 	}
 
-	if !structCacheDisabled {
-		// Put the inspected struct in the cache and prime it
-		structCache.LoadOrStore(typ, si)
-	}
+	// Put the inspected struct in the cache and prime it
+	structCache.LoadOrStore(typ, si)
 
 	return
 }
@@ -117,8 +106,14 @@ func ToMap(strct any) (map[string]string, error) {
 	}
 
 	v := reflect.ValueOf(strct)
-	out := make(map[string]string, len(si.Exported))
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil, ErrNotAStruct
+		}
+		v = v.Elem()
+	}
 
+	out := make(map[string]string, len(si.Exported))
 	for _, field := range si.Exported {
 		val, err := field.Encode(v.Field(field.Index))
 		if err != nil {
