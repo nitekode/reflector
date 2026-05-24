@@ -29,6 +29,30 @@ type structInfo struct {
 	Exported []*structFieldInfo
 }
 
+func (si structInfo) Embeds(target any) bool {
+	targetType, ok := normalizeEmbeddedStructType(target)
+	if !ok {
+		return false
+	}
+
+	for _, field := range si.Fields {
+		if !field.IsAnonymous {
+			continue
+		}
+
+		fieldType, ok := normalizeEmbeddedStructType(field.Type)
+		if !ok {
+			continue
+		}
+
+		if fieldType == targetType {
+			return true
+		}
+	}
+
+	return false
+}
+
 func InspectStruct(s any) (si structInfo, err error) {
 	if s == nil {
 		return si, ErrNotAStruct
@@ -173,4 +197,27 @@ func parseStructTag(raw string) map[string]string {
 	}
 
 	return result
+}
+
+func normalizeEmbeddedStructType(target any) (reflect.Type, bool) {
+	if target == nil {
+		return nil, false
+	}
+
+	var typ reflect.Type
+	if t, ok := target.(reflect.Type); ok {
+		typ = t
+	} else {
+		typ = reflect.TypeOf(target)
+	}
+
+	for typ != nil && typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	if typ == nil || typ.Kind() != reflect.Struct {
+		return nil, false
+	}
+
+	return typ, true
 }

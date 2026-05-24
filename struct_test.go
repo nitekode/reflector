@@ -60,6 +60,126 @@ func TestInspectStructErrors(t *testing.T) {
 	}
 }
 
+func TestStructInfoEmbeds(t *testing.T) {
+	structCache.Clear()
+
+	type embedded struct {
+		Flag bool
+	}
+
+	type other struct {
+		Name string
+	}
+
+	type nested struct {
+		embedded
+	}
+
+	type sample struct {
+		embedded
+		*other
+		Named embedded
+		nested
+	}
+
+	type directOnly struct {
+		nested
+	}
+
+	type namedOnly struct {
+		Pointer *other
+	}
+
+	si, err := InspectStruct(sample{})
+	if err != nil {
+		t.Fatalf("InspectStruct() error = %v", err)
+	}
+
+	directOnlyInfo, err := InspectStruct(directOnly{})
+	if err != nil {
+		t.Fatalf("InspectStruct() error = %v", err)
+	}
+
+	namedOnlyInfo, err := InspectStruct(namedOnly{})
+	if err != nil {
+		t.Fatalf("InspectStruct() error = %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		si     structInfo
+		target any
+		want   bool
+	}{
+		{
+			name:   "direct anonymous value embed",
+			si:     si,
+			target: embedded{},
+			want:   true,
+		},
+		{
+			name:   "direct anonymous pointer embed matches underlying struct",
+			si:     si,
+			target: &other{},
+			want:   true,
+		},
+		{
+			name:   "reflect.Type target",
+			si:     si,
+			target: reflect.TypeFor[embedded](),
+			want:   true,
+		},
+		{
+			name:   "named field does not match",
+			si:     namedOnlyInfo,
+			target: other{},
+			want:   false,
+		},
+		{
+			name:   "direct nested type matches",
+			si:     si,
+			target: reflect.TypeFor[nested](),
+			want:   true,
+		},
+		{
+			name:   "promoted nested target does not match",
+			si:     directOnlyInfo,
+			target: reflect.TypeFor[embedded](),
+			want:   false,
+		},
+		{
+			name:   "unrelated type does not match",
+			si:     si,
+			target: struct{ Count int }{},
+			want:   false,
+		},
+		{
+			name:   "nil target",
+			si:     si,
+			target: nil,
+			want:   false,
+		},
+		{
+			name:   "non-struct target",
+			si:     si,
+			target: 42,
+			want:   false,
+		},
+		{
+			name:   "pointer to non-struct target",
+			si:     si,
+			target: new(int),
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		if got := tt.si.Embeds(tt.target); got != tt.want {
+			t.Fatalf("%s: Embeds(%v) = %v, want %v", tt.name, tt.target, got, tt.want)
+		}
+	}
+}
+
 func TestNewStruct(t *testing.T) {
 	structCache.Clear()
 
