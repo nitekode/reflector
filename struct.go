@@ -29,6 +29,18 @@ type structInfo struct {
 	Exported []*structFieldInfo
 }
 
+type structOptions struct {
+	nameTag string
+}
+
+type StructOption func(*structOptions)
+
+func WithNameTag(tag string) StructOption {
+	return func(opts *structOptions) {
+		opts.nameTag = tag
+	}
+}
+
 func (si structInfo) Embeds(target any) bool {
 	targetType, ok := normalizeEmbeddedStructType(target)
 	if !ok {
@@ -105,17 +117,23 @@ func InspectStruct(s any) (si structInfo, err error) {
 	return
 }
 
-func NewStruct[T any](strct T, input map[string]string) (T, error) {
+func NewStruct[T any](strct T, input map[string]string, opts ...StructOption) (T, error) {
 	si, err := InspectStruct(strct)
 	if err != nil {
 		return strct, err
 	}
 
+	structOpts := parseStructOptions(opts)
+	fields, err := resolveStructFields(si.Exported, structOpts)
+	if err != nil {
+		return strct, err
+	}
+
 	structInst := reflect.New(si.Type).Elem()
-	for _, field := range si.Exported {
-		if value, found := input[field.Name]; found {
+	for _, field := range fields {
+		if value, found := input[field.name]; found {
 			if err := field.Decode(structInst.Field(field.Index), value); err != nil {
-				return strct, fmt.Errorf("reflector: failed to decode field %q with value %q: %w", field.Name, value, err)
+				return strct, fmt.Errorf("reflector: failed to decode field %q with value %q: %w", field.name, value, err)
 			}
 		}
 	}
@@ -123,8 +141,14 @@ func NewStruct[T any](strct T, input map[string]string) (T, error) {
 	return structInst.Interface().(T), nil
 }
 
-func ToMap(strct any) (map[string]string, error) {
+func ToMap(strct any, opts ...StructOption) (map[string]string, error) {
 	si, err := InspectStruct(strct)
+	if err != nil {
+		return nil, err
+	}
+
+	structOpts := parseStructOptions(opts)
+	fields, err := resolveStructFields(si.Exported, structOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -137,16 +161,21 @@ func ToMap(strct any) (map[string]string, error) {
 		v = v.Elem()
 	}
 
-	out := make(map[string]string, len(si.Exported))
-	for _, field := range si.Exported {
+	out := make(map[string]string, len(fields))
+	for _, field := range fields {
 		val, err := field.Encode(v.Field(field.Index))
 		if err != nil {
-			return nil, fmt.Errorf("reflector: failed to encode field %q: %w", field.Name, err)
+			return nil, fmt.Errorf("reflector: failed to encode field %q: %w", field.name, err)
 		}
-		out[field.Name] = val
+		out[field.name] = val
 	}
 
 	return out, nil
+}
+
+type resolvedStructField struct {
+	*structFieldInfo
+	name string
 }
 
 func parseStructTag(raw string) map[string]string {
@@ -220,4 +249,63 @@ func normalizeEmbeddedStructType(target any) (reflect.Type, bool) {
 	}
 
 	return typ, true
+}
+
+func parseStructOptions(opts []StructOption) structOptions {
+	var structOpts structOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&structOpts)
+		}
+	}
+
+	return structOpts
+}
+
+func resolveStructFields(fields []*structFieldInfo, opts structOptions) ([]resolvedStructField, error) {
+	resolved := make([]resolvedStructField, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+
+	for _, field := range fields {
+		name, ok := resolveStructFieldName(field, opts)
+		if !ok {
+			continue
+		}
+		if _, found := seen[name]; found {
+			return nil, fmt.Errorf("reflector: duplicate field name %q", name)
+		}
+		seen[name] = struct{}{}
+		resolved = append(resolved, resolvedStructField{
+			structFieldInfo: field,
+			name:            name,
+		})
+	}
+
+	return resolved, nil
+}
+
+func resolveStructFieldName(field *structFieldInfo, opts structOptions) (string, bool) {
+	name := field.Name
+	if opts.nameTag == "" {
+		return name, true
+	}
+
+	tagValue, found := field.Tags[opts.nameTag]
+	if !found {
+		return name, true
+	}
+
+	if comma := strings.IndexByte(tagValue, ','); comma >= 0 {
+		tagValue = tagValue[:comma]
+	}
+
+	switch tagValue {
+	case "":
+		return "", false
+	case "-":
+		return "", false
+	default:
+		return tagValue, true
+	}
+
 }

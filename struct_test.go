@@ -213,6 +213,39 @@ func TestNewStruct(t *testing.T) {
 	}
 }
 
+func TestNewStructWithNameTag(t *testing.T) {
+	structCache.Clear()
+
+	type sample struct {
+		Name   string  `json:"name"`
+		Age    int     `json:"age,omitempty"`
+		Score  float64 `json:"score"`
+		Hidden string  `json:"-"`
+		Active bool
+	}
+
+	got, err := NewStruct(sample{}, map[string]string{
+		"name":   "alice",
+		"age":    "42",
+		"score":  "12.5",
+		"Hidden": "ignored",
+		"Active": "true",
+	}, WithNameTag("json"))
+	if err != nil {
+		t.Fatalf("NewStruct() error = %v", err)
+	}
+
+	want := sample{
+		Name:   "alice",
+		Age:    42,
+		Score:  12.5,
+		Active: true,
+	}
+	if got != want {
+		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
+	}
+}
+
 func TestNewStructErrors(t *testing.T) {
 	structCache.Clear()
 
@@ -239,6 +272,32 @@ func TestNewStructErrors(t *testing.T) {
 		}
 		if target.Type != reflect.TypeFor[[]string]() {
 			t.Fatalf("unsupported decoder type = %v, want []string", target.Type)
+		}
+	})
+
+	t.Run("tagged fields do not fall back to field name", func(t *testing.T) {
+		type sample struct {
+			Name string `json:"name"`
+		}
+
+		got, err := NewStruct(sample{}, map[string]string{"Name": "alice"}, WithNameTag("json"))
+		if err != nil {
+			t.Fatalf("NewStruct() error = %v", err)
+		}
+		if got.Name != "" {
+			t.Fatalf("Name = %q, want empty string", got.Name)
+		}
+	})
+
+	t.Run("duplicate tagged names", func(t *testing.T) {
+		type sample struct {
+			First  string `json:"name"`
+			Second string `json:"name,omitempty"`
+		}
+
+		_, err := NewStruct(sample{}, map[string]string{"name": "alice"}, WithNameTag("json"))
+		if err == nil || !strings.Contains(err.Error(), `duplicate field name "name"`) {
+			t.Fatalf("NewStruct() error = %v, want duplicate field name error", err)
 		}
 	})
 }
@@ -278,6 +337,39 @@ func TestToMap(t *testing.T) {
 	}
 }
 
+func TestToMapWithNameTag(t *testing.T) {
+	structCache.Clear()
+
+	type sample struct {
+		Name   string  `json:"name"`
+		Age    int     `json:"age,omitempty"`
+		Score  float64 `json:"score"`
+		Hidden string  `json:"-"`
+		Active bool
+	}
+
+	got, err := ToMap(sample{
+		Name:   "alice",
+		Age:    42,
+		Score:  12.5,
+		Hidden: "ignored",
+		Active: true,
+	}, WithNameTag("json"))
+	if err != nil {
+		t.Fatalf("ToMap() error = %v", err)
+	}
+
+	want := map[string]string{
+		"name":   "alice",
+		"age":    "42",
+		"score":  strconv.FormatFloat(12.5, 'f', -1, 64),
+		"Active": "true",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ToMap() = %#v, want %#v", got, want)
+	}
+}
+
 func TestToMapErrors(t *testing.T) {
 	structCache.Clear()
 
@@ -305,6 +397,18 @@ func TestToMapErrors(t *testing.T) {
 		_, err := ToMap(input)
 		if !errors.Is(err, ErrNotAStruct) {
 			t.Fatalf("ToMap() error = %v, want %v", err, ErrNotAStruct)
+		}
+	})
+
+	t.Run("duplicate tagged names", func(t *testing.T) {
+		type sample struct {
+			First  string `json:"name"`
+			Second string `json:"name,omitempty"`
+		}
+
+		_, err := ToMap(sample{First: "a", Second: "b"}, WithNameTag("json"))
+		if err == nil || !strings.Contains(err.Error(), `duplicate field name "name"`) {
+			t.Fatalf("ToMap() error = %v, want duplicate field name error", err)
 		}
 	})
 }
