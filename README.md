@@ -23,8 +23,8 @@ type Common struct {
 
 type Config struct {
 	Common
-	Name string `json:"name"`
-	Port int    `json:"port"`
+	Name string `json:"name" default:"api"`
+	Port int    `json:"port" default:"8080"`
 }
 
 si, _ := reflector.InspectStruct(Config{})
@@ -32,9 +32,7 @@ fmt.Println(si.Embeds(Common{})) // true
 
 cfg, _ := reflector.NewStruct(Config{}, map[string]string{
 	"Verbose": "true",
-	"name":    "api",
-	"port":    "8080",
-}, reflector.WithNameTag("json"))
+}, reflector.WithNameTag("json"), reflector.WithDefaultTag("default"))
 
 values, _ := reflector.ToMap(cfg, reflector.WithNameTag("json"))
 fmt.Println(values["port"]) // 8080
@@ -125,5 +123,6 @@ For `NewStruct`, `ToMap`, and `WithStringDecoding()`:
 
 - `NewStruct` and `ToMap` use exported fields.
 - `WithNameTag("json")` switches `NewStruct` and `ToMap` to tag-based names.
+- `WithDefaultTag("default")` lets `NewStruct` fill missing fields from tags.
 - `Embeds` checks direct embedded fields only.
 - `Call` is strict by default.

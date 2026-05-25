@@ -30,7 +30,8 @@ type structInfo struct {
 }
 
 type structOptions struct {
-	nameTag string
+	nameTag    string
+	defaultTag string
 }
 
 type StructOption func(*structOptions)
@@ -38,6 +39,12 @@ type StructOption func(*structOptions)
 func WithNameTag(tag string) StructOption {
 	return func(opts *structOptions) {
 		opts.nameTag = tag
+	}
+}
+
+func WithDefaultTag(tag string) StructOption {
+	return func(opts *structOptions) {
+		opts.defaultTag = tag
 	}
 }
 
@@ -135,6 +142,13 @@ func NewStruct[T any](strct T, input map[string]string, opts ...StructOption) (T
 			if err := field.Decode(structInst.Field(field.Index), value); err != nil {
 				return strct, fmt.Errorf("reflector: failed to decode field %q with value %q: %w", field.name, value, err)
 			}
+			continue
+		}
+
+		if field.hasDefault {
+			if err := field.Decode(structInst.Field(field.Index), field.defaultValue); err != nil {
+				return strct, fmt.Errorf("reflector: failed to decode default for field %q with value %q: %w", field.name, field.defaultValue, err)
+			}
 		}
 	}
 
@@ -175,7 +189,9 @@ func ToMap(strct any, opts ...StructOption) (map[string]string, error) {
 
 type resolvedStructField struct {
 	*structFieldInfo
-	name string
+	name         string
+	defaultValue string
+	hasDefault   bool
 }
 
 func parseStructTag(raw string) map[string]string {
@@ -278,6 +294,8 @@ func resolveStructFields(fields []*structFieldInfo, opts structOptions) ([]resol
 		resolved = append(resolved, resolvedStructField{
 			structFieldInfo: field,
 			name:            name,
+			defaultValue:    resolveStructFieldDefault(field, opts),
+			hasDefault:      hasStructFieldDefault(field, opts),
 		})
 	}
 
@@ -307,5 +325,26 @@ func resolveStructFieldName(field *structFieldInfo, opts structOptions) (string,
 	default:
 		return tagValue, true
 	}
+}
 
+func resolveStructFieldDefault(field *structFieldInfo, opts structOptions) string {
+	if opts.defaultTag == "" {
+		return ""
+	}
+
+	tagValue, found := field.Tags[opts.defaultTag]
+	if !found || tagValue == "" {
+		return ""
+	}
+
+	return tagValue
+}
+
+func hasStructFieldDefault(field *structFieldInfo, opts structOptions) bool {
+	if opts.defaultTag == "" {
+		return false
+	}
+
+	tagValue, found := field.Tags[opts.defaultTag]
+	return found && tagValue != ""
 }

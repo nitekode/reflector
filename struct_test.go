@@ -246,6 +246,60 @@ func TestNewStructWithNameTag(t *testing.T) {
 	}
 }
 
+func TestNewStructWithDefaultTag(t *testing.T) {
+	structCache.Clear()
+
+	type sample struct {
+		Name   string  `default:"alice"`
+		Age    int     `default:"42"`
+		Active bool    `default:"true"`
+		Score  float64 `default:"12.5"`
+		Empty  string  `default:""`
+	}
+
+	got, err := NewStruct(sample{}, map[string]string{}, WithDefaultTag("default"))
+	if err != nil {
+		t.Fatalf("NewStruct() error = %v", err)
+	}
+
+	want := sample{
+		Name:   "alice",
+		Age:    42,
+		Active: true,
+		Score:  12.5,
+	}
+	if got != want {
+		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
+	}
+}
+
+func TestNewStructWithDefaultTagAndNameTag(t *testing.T) {
+	structCache.Clear()
+
+	type sample struct {
+		Name  string `json:"name" default:"alice"`
+		Alias string `json:"alias" default:"guest"`
+		Age   int    `json:"age" default:"42"`
+	}
+
+	got, err := NewStruct(sample{}, map[string]string{
+		"name":  "bob",
+		"alias": "",
+	}, WithNameTag("json"), WithDefaultTag("default"))
+	if err != nil {
+		t.Fatalf("NewStruct() error = %v", err)
+	}
+
+	want := sample{
+		Name:  "bob",
+		Alias: "",
+		Age:   42,
+	}
+	if got != want {
+		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
+	}
+}
+
 func TestNewStructErrors(t *testing.T) {
 	structCache.Clear()
 
@@ -298,6 +352,32 @@ func TestNewStructErrors(t *testing.T) {
 		_, err := NewStruct(sample{}, map[string]string{"name": "alice"}, WithNameTag("json"))
 		if err == nil || !strings.Contains(err.Error(), `duplicate field name "name"`) {
 			t.Fatalf("NewStruct() error = %v, want duplicate field name error", err)
+		}
+	})
+
+	t.Run("invalid default value", func(t *testing.T) {
+		type sample struct {
+			Age int `default:"not-a-number"`
+		}
+
+		_, err := NewStruct(sample{}, map[string]string{}, WithDefaultTag("default"))
+		if err == nil || !strings.Contains(err.Error(), `failed to decode default for field "Age"`) {
+			t.Fatalf("NewStruct() error = %v, want default decode error for Age", err)
+		}
+	})
+
+	t.Run("unsupported decoder for default", func(t *testing.T) {
+		type sample struct {
+			Labels []string `default:"a,b"`
+		}
+
+		_, err := NewStruct(sample{}, map[string]string{}, WithDefaultTag("default"))
+		var target ErrDecoderUnsupportedType
+		if !errors.As(err, &target) {
+			t.Fatalf("NewStruct() error = %v, want ErrDecoderUnsupportedType", err)
+		}
+		if target.Type != reflect.TypeFor[[]string]() {
+			t.Fatalf("unsupported decoder type = %v, want []string", target.Type)
 		}
 	})
 }
