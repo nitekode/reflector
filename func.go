@@ -105,6 +105,7 @@ func Call(fn any, inputs []any, opts ...CallOption) ([]reflect.Value, error) {
 	}
 
 	args := make([]reflect.Value, 0, len(inputs))
+	useCallSlice := false
 
 	for i, input := range inputs {
 		value := reflect.ValueOf(input)
@@ -117,7 +118,11 @@ func Call(fn any, inputs []any, opts ...CallOption) ([]reflect.Value, error) {
 		pi := fi.Params[paramIndex]
 		expectedType := pi.Type
 		if pi.IsVariadic {
-			expectedType = pi.Type.Elem() // []string -> string
+			if len(inputs) == len(fi.Params) && value.IsValid() && value.Type().AssignableTo(pi.Type) {
+				useCallSlice = true
+			} else {
+				expectedType = pi.Type.Elem() // []string -> string
+			}
 		}
 
 		if callOpts.stringDecoding {
@@ -135,6 +140,10 @@ func Call(fn any, inputs []any, opts ...CallOption) ([]reflect.Value, error) {
 		}
 
 		args = append(args, value)
+	}
+
+	if useCallSlice {
+		return fi.Value.CallSlice(args), nil
 	}
 
 	return fi.Value.Call(args), nil

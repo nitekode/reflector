@@ -104,6 +104,18 @@ func TestCall(t *testing.T) {
 			want:   []any{16},
 		},
 		{
+			name:   "variadic with no extra args",
+			fn:     sum,
+			inputs: []any{10},
+			want:   []any{10},
+		},
+		{
+			name:   "variadic slice input",
+			fn:     sum,
+			inputs: []any{10, []int{1, 2, 3}},
+			want:   []any{16},
+		},
+		{
 			name:    "wrong-arity",
 			fn:      add,
 			inputs:  []any{1},
@@ -194,6 +206,28 @@ func TestCallWithStringDecoding(t *testing.T) {
 
 	t.Run("variadic decode", func(t *testing.T) {
 		got, err := Call(sum, []any{"10", "1", "2", "3"}, WithStringDecoding())
+		if err != nil {
+			t.Fatalf("Call() error = %v", err)
+		}
+
+		if len(got) != 1 || got[0].Interface() != 16 {
+			t.Fatalf("Call() = %v, want [16]", got)
+		}
+	})
+
+	t.Run("variadic decode with no extra args", func(t *testing.T) {
+		got, err := Call(sum, []any{"10"}, WithStringDecoding())
+		if err != nil {
+			t.Fatalf("Call() error = %v", err)
+		}
+
+		if len(got) != 1 || got[0].Interface() != 10 {
+			t.Fatalf("Call() = %v, want [10]", got)
+		}
+	})
+
+	t.Run("variadic mixed typed and decoded args", func(t *testing.T) {
+		got, err := Call(sum, []any{10, "1", 2, "3"}, WithStringDecoding())
 		if err != nil {
 			t.Fatalf("Call() error = %v", err)
 		}
