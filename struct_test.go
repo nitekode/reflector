@@ -300,6 +300,34 @@ func TestNewStructWithDefaultTagAndNameTag(t *testing.T) {
 	}
 }
 
+func TestNewStructIgnoresAnonymousEmbeddedFields(t *testing.T) {
+	structCache.Clear()
+
+	type Common struct {
+		Verbose bool
+	}
+
+	type sample struct {
+		Common
+		Name string
+	}
+
+	got, err := NewStruct(sample{}, map[string]string{
+		"Verbose": "true",
+		"Name":    "alice",
+	})
+	if err != nil {
+		t.Fatalf("NewStruct() error = %v", err)
+	}
+
+	want := sample{
+		Name: "alice",
+	}
+	if got != want {
+		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
+	}
+}
+
 func TestNewStructErrors(t *testing.T) {
 	structCache.Clear()
 
@@ -444,6 +472,34 @@ func TestToMapWithNameTag(t *testing.T) {
 		"age":    "42",
 		"score":  strconv.FormatFloat(12.5, 'f', -1, 64),
 		"Active": "true",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ToMap() = %#v, want %#v", got, want)
+	}
+}
+
+func TestToMapIgnoresAnonymousEmbeddedFields(t *testing.T) {
+	structCache.Clear()
+
+	type Common struct {
+		Verbose bool
+	}
+
+	type sample struct {
+		Common
+		Name string
+	}
+
+	got, err := ToMap(sample{
+		Common: Common{Verbose: true},
+		Name:   "alice",
+	})
+	if err != nil {
+		t.Fatalf("ToMap() error = %v", err)
+	}
+
+	want := map[string]string{
+		"Name": "alice",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ToMap() = %#v, want %#v", got, want)

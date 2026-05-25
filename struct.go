@@ -283,6 +283,12 @@ func resolveStructFields(fields []*structFieldInfo, opts structOptions) ([]resol
 	seen := make(map[string]struct{}, len(fields))
 
 	for _, field := range fields {
+		// Anonymous embeds are exposed for inspection via Fields/Embeds,
+		// but map conversion only operates on direct named fields.
+		if field.IsAnonymous {
+			continue
+		}
+
 		name, ok := resolveStructFieldName(field, opts)
 		if !ok {
 			continue
