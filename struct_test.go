@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-func countNonNilStructFields(fields []*structFieldInfo) int {
-	count := 0
-	for _, field := range fields {
-		if field != nil {
-			count++
-		}
-	}
-	return count
-}
-
 func TestInspectStruct(t *testing.T) {
 	structCache.Clear()
 
@@ -44,17 +34,17 @@ func TestInspectStruct(t *testing.T) {
 	if si.Type != reflect.TypeFor[sample]() {
 		t.Fatalf("Type = %v, want %v", si.Type, reflect.TypeFor[sample]())
 	}
-	if len(si.Fields) != 5 {
-		t.Fatalf("len(Fields) = %d, want 5", len(si.Fields))
-	}
-	if countNonNilStructFields(si.Fields) != 4 {
-		t.Fatalf("non-nil fields = %d, want 4", countNonNilStructFields(si.Fields))
+	if len(si.Fields) != 4 {
+		t.Fatalf("len(Fields) = %d, want 4", len(si.Fields))
 	}
 	if si.Fields[0] == nil || !si.Fields[0].IsAnonymous {
 		t.Fatal("expected first field to be the exported anonymous embedded field")
 	}
-	if si.Fields[4] != nil {
-		t.Fatal("expected unexported field slot to be nil")
+	if si.Fields[0].Index != 0 {
+		t.Fatalf("embedded field index = %d, want 0", si.Fields[0].Index)
+	}
+	if si.Fields[3].Index != 3 {
+		t.Fatalf("Score field index = %d, want 3", si.Fields[3].Index)
 	}
 	if si.Fields[1].Tags["json"] != "name" {
 		t.Fatalf("Name json tag = %q, want %q", si.Fields[1].Tags["json"], "name")
@@ -190,6 +180,28 @@ func TestStructInfoEmbeds(t *testing.T) {
 		if got := tt.si.Embeds(tt.target); got != tt.want {
 			t.Fatalf("%s: Embeds(%v) = %v, want %v", tt.name, tt.target, got, tt.want)
 		}
+	}
+}
+
+func TestStructInfoEmbedsWithOmittedUnexportedField(t *testing.T) {
+	structCache.Clear()
+
+	type group struct {
+		Name string
+	}
+
+	type command struct {
+		group
+		Title string
+	}
+
+	si, err := InspectStruct(command{})
+	if err != nil {
+		t.Fatalf("InspectStruct() error = %v", err)
+	}
+
+	if got := si.Embeds(group{}); got {
+		t.Fatalf("Embeds(group{}) = %v, want false", got)
 	}
 }
 

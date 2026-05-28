@@ -95,7 +95,7 @@ func InspectStruct(s any) (si structInfo, err error) {
 	si.Name = typ.Name()
 	si.Type = typ
 
-	si.Fields = make([]*structFieldInfo, typ.NumField())
+	si.Fields = make([]*structFieldInfo, 0, typ.NumField())
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
 
@@ -113,7 +113,7 @@ func InspectStruct(s any) (si structInfo, err error) {
 			Encode:      pickEncoder(field.Type),
 			Decode:      pickDecoder(field.Type),
 		}
-		si.Fields[i] = &fi
+		si.Fields = append(si.Fields, &fi)
 	}
 
 	// Put the inspected struct in the cache and prime it
