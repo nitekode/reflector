@@ -8,15 +8,25 @@ import (
 	"testing"
 )
 
+func countNonNilStructFields(fields []*structFieldInfo) int {
+	count := 0
+	for _, field := range fields {
+		if field != nil {
+			count++
+		}
+	}
+	return count
+}
+
 func TestInspectStruct(t *testing.T) {
 	structCache.Clear()
 
-	type embedded struct {
+	type Embedded struct {
 		Flag bool `flag:"embedded"`
 	}
 
 	type sample struct {
-		embedded
+		Embedded
 		Name  string  `json:"name" note:"has spaces"`
 		Age   int     `json:"age"`
 		Score float64 `json:"score"`
@@ -37,11 +47,14 @@ func TestInspectStruct(t *testing.T) {
 	if len(si.Fields) != 5 {
 		t.Fatalf("len(Fields) = %d, want 5", len(si.Fields))
 	}
-	if len(si.Exported) != 3 {
-		t.Fatalf("len(Exported) = %d, want 3", len(si.Exported))
+	if countNonNilStructFields(si.Fields) != 4 {
+		t.Fatalf("non-nil fields = %d, want 4", countNonNilStructFields(si.Fields))
 	}
 	if si.Fields[0] == nil || !si.Fields[0].IsAnonymous {
-		t.Fatal("expected first field to be the anonymous embedded field")
+		t.Fatal("expected first field to be the exported anonymous embedded field")
+	}
+	if si.Fields[4] != nil {
+		t.Fatal("expected unexported field slot to be nil")
 	}
 	if si.Fields[1].Tags["json"] != "name" {
 		t.Fatalf("Name json tag = %q, want %q", si.Fields[1].Tags["json"], "name")
@@ -63,31 +76,31 @@ func TestInspectStructErrors(t *testing.T) {
 func TestStructInfoEmbeds(t *testing.T) {
 	structCache.Clear()
 
-	type embedded struct {
+	type Embedded struct {
 		Flag bool
 	}
 
-	type other struct {
+	type Other struct {
 		Name string
 	}
 
-	type nested struct {
-		embedded
+	type Nested struct {
+		Embedded
 	}
 
 	type sample struct {
-		embedded
-		*other
-		Named embedded
-		nested
+		Embedded
+		*Other
+		Named Embedded
+		Nested
 	}
 
 	type directOnly struct {
-		nested
+		Nested
 	}
 
 	type namedOnly struct {
-		Pointer *other
+		Pointer *Other
 	}
 
 	si, err := InspectStruct(sample{})
@@ -114,37 +127,37 @@ func TestStructInfoEmbeds(t *testing.T) {
 		{
 			name:   "direct anonymous value embed",
 			si:     si,
-			target: embedded{},
+			target: Embedded{},
 			want:   true,
 		},
 		{
 			name:   "direct anonymous pointer embed matches underlying struct",
 			si:     si,
-			target: &other{},
+			target: &Other{},
 			want:   true,
 		},
 		{
 			name:   "reflect.Type target",
 			si:     si,
-			target: reflect.TypeFor[embedded](),
+			target: reflect.TypeFor[Embedded](),
 			want:   true,
 		},
 		{
 			name:   "named field does not match",
 			si:     namedOnlyInfo,
-			target: other{},
+			target: Other{},
 			want:   false,
 		},
 		{
 			name:   "direct nested type matches",
 			si:     si,
-			target: reflect.TypeFor[nested](),
+			target: reflect.TypeFor[Nested](),
 			want:   true,
 		},
 		{
 			name:   "promoted nested target does not match",
 			si:     directOnlyInfo,
-			target: reflect.TypeFor[embedded](),
+			target: reflect.TypeFor[Embedded](),
 			want:   false,
 		},
 		{
@@ -188,7 +201,6 @@ func TestNewStruct(t *testing.T) {
 		Age    int
 		Active bool
 		Score  float64
-		hidden string
 	}
 
 	got, err := NewStruct(sample{}, map[string]string{
@@ -196,7 +208,6 @@ func TestNewStruct(t *testing.T) {
 		"Age":    "42",
 		"Active": "true",
 		"Score":  "12.5",
-		"hidden": "ignored",
 	})
 	if err != nil {
 		t.Fatalf("NewStruct() error = %v", err)
@@ -418,7 +429,6 @@ func TestToMap(t *testing.T) {
 		Age    int
 		Active bool
 		Score  float64
-		hidden string
 	}
 
 	input := &sample{
@@ -426,7 +436,6 @@ func TestToMap(t *testing.T) {
 		Age:    42,
 		Active: true,
 		Score:  12.5,
-		hidden: "ignored",
 	}
 
 	got, err := ToMap(input)

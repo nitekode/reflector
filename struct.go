@@ -16,17 +16,16 @@ type structFieldInfo struct {
 	Type        reflect.Type
 	Kind        reflect.Kind
 	IsAnonymous bool
-	IsExported  bool
 	Tags        map[string]string
 	Encode      fieldEncoder
 	Decode      fieldDecoder
 }
 
 type structInfo struct {
-	Name     string
-	Type     reflect.Type
-	Fields   []*structFieldInfo
-	Exported []*structFieldInfo
+	Name            string
+	Type            reflect.Type
+	Fields          []*structFieldInfo
+	EmbeddedStructs []*structFieldInfo
 }
 
 type structOptions struct {
@@ -100,22 +99,21 @@ func InspectStruct(s any) (si structInfo, err error) {
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
 
+		if !field.IsExported() {
+			continue
+		}
+
 		fi := structFieldInfo{
 			Index:       i,
 			Name:        field.Name,
 			Type:        field.Type,
 			Kind:        field.Type.Kind(),
 			IsAnonymous: field.Anonymous,
-			IsExported:  field.IsExported(),
 			Tags:        parseStructTag(string(field.Tag)),
 			Encode:      pickEncoder(field.Type),
 			Decode:      pickDecoder(field.Type),
 		}
 		si.Fields[i] = &fi
-
-		if fi.IsExported {
-			si.Exported = append(si.Exported, &fi)
-		}
 	}
 
 	// Put the inspected struct in the cache and prime it
@@ -131,7 +129,7 @@ func NewStruct[T any](strct T, input map[string]string, opts ...StructOption) (T
 	}
 
 	structOpts := parseStructOptions(opts)
-	fields, err := resolveStructFields(si.Exported, structOpts)
+	fields, err := resolveStructFields(si.Fields, structOpts)
 	if err != nil {
 		return strct, err
 	}
@@ -162,7 +160,7 @@ func ToMap(strct any, opts ...StructOption) (map[string]string, error) {
 	}
 
 	structOpts := parseStructOptions(opts)
-	fields, err := resolveStructFields(si.Exported, structOpts)
+	fields, err := resolveStructFields(si.Fields, structOpts)
 	if err != nil {
 		return nil, err
 	}
