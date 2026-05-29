@@ -428,11 +428,11 @@ func TestNewStructErrors(t *testing.T) {
 
 	t.Run("duplicate tagged names", func(t *testing.T) {
 		type sample struct {
-			First  string `json:"name"`
-			Second string `json:"name,omitempty"`
+			First  string `opt:"name"`
+			Second string `opt:"name,omitempty"`
 		}
 
-		_, err := NewStruct(sample{}, map[string]string{"name": "alice"}, WithNameTag("json"))
+		_, err := NewStruct(sample{}, map[string]string{"name": "alice"}, WithNameTag("opt"))
 		if err == nil || !strings.Contains(err.Error(), `duplicate field name "name"`) {
 			t.Fatalf("NewStruct() error = %v, want duplicate field name error", err)
 		}
@@ -592,18 +592,18 @@ func TestToMapErrors(t *testing.T) {
 
 	t.Run("duplicate tagged names", func(t *testing.T) {
 		type sample struct {
-			First  string `json:"name"`
-			Second string `json:"name,omitempty"`
+			First  string `opt:"name"`
+			Second string `opt:"name,omitempty"`
 		}
 
-		_, err := ToMap(sample{First: "a", Second: "b"}, WithNameTag("json"))
+		_, err := ToMap(sample{First: "a", Second: "b"}, WithNameTag("opt"))
 		if err == nil || !strings.Contains(err.Error(), `duplicate field name "name"`) {
 			t.Fatalf("ToMap() error = %v, want duplicate field name error", err)
 		}
 	})
 }
 
-func TestFill(t *testing.T) {
+func TestFillFromStruct(t *testing.T) {
 	structCache.Clear()
 
 	type global struct {
@@ -622,13 +622,13 @@ func TestFill(t *testing.T) {
 	cmd := command{Name: "deploy"}
 
 	// Each source carries only its own fields, mirroring independent parsing.
-	if err := Fill(&cmd, group{Greeting: "hello"}); err != nil {
-		t.Fatalf("Fill(group) error = %v", err)
+	if err := FillFromStruct(&cmd, group{Greeting: "hello"}); err != nil {
+		t.Fatalf("FillFromStruct(group) error = %v", err)
 	}
 	// Filling global after group must not clobber the Greeting set above:
 	// own-fields merge makes the order irrelevant.
-	if err := Fill(&cmd, global{Verbose: true}); err != nil {
-		t.Fatalf("Fill(global) error = %v", err)
+	if err := FillFromStruct(&cmd, global{Verbose: true}); err != nil {
+		t.Fatalf("FillFromStruct(global) error = %v", err)
 	}
 
 	want := command{
@@ -639,20 +639,134 @@ func TestFill(t *testing.T) {
 		Name: "deploy",
 	}
 	if cmd != want {
-		t.Fatalf("Fill() = %#v, want %#v", cmd, want)
+		t.Fatalf("FillFromStruct() = %#v, want %#v", cmd, want)
 	}
 }
 
-func TestFillRejectsNonEmbedded(t *testing.T) {
+func TestFillFromStructRejectsNonEmbedded(t *testing.T) {
 	structCache.Clear()
 
 	type other struct{ X int }
 	type command struct{ Name string }
 
 	cmd := command{}
-	err := Fill(&cmd, other{X: 1})
+	err := FillFromStruct(&cmd, other{X: 1})
 	if err == nil || !strings.Contains(err.Error(), "does not embed") {
-		t.Fatalf("Fill() error = %v, want does-not-embed error", err)
+		t.Fatalf("FillFromStruct() error = %v, want does-not-embed error", err)
+	}
+}
+
+func TestFillFromMap(t *testing.T) {
+	structCache.Clear()
+
+	type config struct {
+		Verbose bool
+		Level   string
+		Count   int
+	}
+
+	// Destination already holds values; the map names only a subset.
+	cfg := config{Verbose: true, Level: "info", Count: 7}
+	if err := FillFromMap(&cfg, map[string]string{
+		"Level": "debug",
+		"Count": "9",
+	}); err != nil {
+		t.Fatalf("FillFromMap() error = %v", err)
+	}
+
+	want := config{
+		Verbose: true, // omitted from the map: left untouched
+		Level:   "debug",
+		Count:   9,
+	}
+	if cfg != want {
+		t.Fatalf("FillFromMap() = %#v, want %#v", cfg, want)
+	}
+}
+
+func TestFillFromMapDoesNotApplyDefaults(t *testing.T) {
+	structCache.Clear()
+
+	type config struct {
+		Level string `default:"info"`
+		Port  int    `default:"8080"`
+	}
+
+	// Port is omitted from the map but has a default tag, and WithDefaultTag is
+	// enabled. The contract: FillFromMap never applies defaults, so Port keeps
+	// its prior value rather than being reset to 8080.
+	cfg := config{Level: "warn", Port: 3000}
+	if err := FillFromMap(&cfg, map[string]string{
+		"Level": "debug",
+	}, WithDefaultTag("default")); err != nil {
+		t.Fatalf("FillFromMap() error = %v", err)
+	}
+
+	want := config{
+		Level: "debug",
+		Port:  3000, // default NOT applied
+	}
+	if cfg != want {
+		t.Fatalf("FillFromMap() = %#v, want %#v", cfg, want)
+	}
+}
+
+func TestFillFromMapThroughEmbedded(t *testing.T) {
+	structCache.Clear()
+
+	type global struct {
+		Verbose bool
+	}
+	type group struct {
+		global
+		Greeting string
+	}
+	type command struct {
+		group
+		Name string
+	}
+
+	cmd := command{Name: "deploy"}
+	// Verbose is promoted from command.group.global; the key must write through
+	// the embedded structs.
+	if err := FillFromMap(&cmd, map[string]string{
+		"Verbose":  "true",
+		"Greeting": "hi",
+	}); err != nil {
+		t.Fatalf("FillFromMap() error = %v", err)
+	}
+
+	want := command{
+		group: group{
+			global:   global{Verbose: true},
+			Greeting: "hi",
+		},
+		Name: "deploy",
+	}
+	if cmd != want {
+		t.Fatalf("FillFromMap() = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestFillFromMapWithNameTag(t *testing.T) {
+	structCache.Clear()
+
+	type config struct {
+		Level string `json:"level"`
+		Count int    `json:"count"`
+	}
+
+	cfg := config{}
+	if err := FillFromMap(&cfg, map[string]string{
+		"level": "debug",
+		"count": "3",
+	}, WithNameTag("json")); err != nil {
+		t.Fatalf("FillFromMap() error = %v", err)
+	}
+
+	want := config{Level: "debug", Count: 3}
+	if cfg != want {
+		t.Fatalf("FillFromMap() = %#v, want %#v", cfg, want)
 	}
 }
 

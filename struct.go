@@ -162,30 +162,44 @@ func NewStruct[T any](strct T, input map[string]string, opts ...StructOption) (T
 	}
 
 	structInst := reflect.New(si.Type).Elem()
+	// Building a fresh value, so applying defaults for fields the input omits
+	// is safe: there is no prior value to overwrite.
+	if err := applyMap(structInst, fields, input, true); err != nil {
+		return strct, err
+	}
+
+	return structInst.Interface().(T), nil
+}
+
+// applyMap writes string values from input into dst's fields. A field is set
+// only when input has a matching key; fields the input omits are left as they
+// are. When applyDefaults is true, a field that is omitted but has a default
+// tag is set to that default instead.
+func applyMap(dst reflect.Value, fields []resolvedStructField, input map[string]string, applyDefaults bool) error {
 	for _, field := range fields {
 		if value, found := input[field.name]; found {
-			target, err := fieldByIndexAlloc(structInst, field.Index)
+			target, err := fieldByIndexAlloc(dst, field.Index)
 			if err != nil {
-				return strct, fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
+				return fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
 			}
 			if err := field.Decode(target, value); err != nil {
-				return strct, fmt.Errorf("reflector: failed to decode field %q with value %q: %w", field.name, value, err)
+				return fmt.Errorf("reflector: failed to decode field %q with value %q: %w", field.name, value, err)
 			}
 			continue
 		}
 
-		if field.hasDefault {
-			target, err := fieldByIndexAlloc(structInst, field.Index)
+		if applyDefaults && field.hasDefault {
+			target, err := fieldByIndexAlloc(dst, field.Index)
 			if err != nil {
-				return strct, fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
+				return fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
 			}
 			if err := field.Decode(target, field.defaultValue); err != nil {
-				return strct, fmt.Errorf("reflector: failed to decode default for field %q with value %q: %w", field.name, field.defaultValue, err)
+				return fmt.Errorf("reflector: failed to decode default for field %q with value %q: %w", field.name, field.defaultValue, err)
 			}
 		}
 	}
 
-	return structInst.Interface().(T), nil
+	return nil
 }
 
 func ToMap(strct any, opts ...StructOption) (map[string]string, error) {
@@ -226,19 +240,19 @@ func ToMap(strct any, opts ...StructOption) (map[string]string, error) {
 	return out, nil
 }
 
-// Fill copies values from src into dst.
+// FillFromStruct copies values from src into dst.
 //
 // dst must contain src's type as an embedded struct (at any depth), or be that
-// type itself. Fill finds where src belongs inside dst and copies src's values
-// into that spot.
+// type itself. FillFromStruct finds where src belongs inside dst and copies
+// src's values into that spot.
 //
 // Only the fields that src declares on its own are copied. Anything src itself
 // got from its own embedded structs is ignored. This matters when you fill dst
 // from several sources: each source only writes its own fields, so they never
-// overwrite each other and the order you call Fill in does not matter.
+// overwrite each other and the order you call FillFromStruct in does not matter.
 //
 // src may be a struct value or a pointer to one.
-func Fill[T any](dst *T, src any) error {
+func FillFromStruct[T any](dst *T, src any) error {
 	if dst == nil || src == nil {
 		return ErrNotAStruct
 	}
@@ -296,6 +310,34 @@ func Fill[T any](dst *T, src any) error {
 	}
 
 	return nil
+}
+
+// FillFromMap writes string values from input into the matching fields of dst.
+//
+// A field is matched by its name, or by its WithNameTag tag value when that
+// option is given. A field is written only when input has a matching key;
+// fields that input does not mention keep whatever value they already hold.
+// Fields promoted from embedded structs are matched and written too.
+//
+// Defaults are never applied here, even if WithDefaultTag is given: FillFromMap
+// writes exactly the keys present in input and nothing else. Use NewStruct when
+// you want defaults filled in for the keys an input omits.
+func FillFromMap[T any](dst *T, input map[string]string, opts ...StructOption) error {
+	if dst == nil {
+		return ErrNotAStruct
+	}
+
+	si, err := InspectStruct(*dst)
+	if err != nil {
+		return err
+	}
+
+	fields, err := resolveStructFields(si.Fields, parseStructOptions(opts))
+	if err != nil {
+		return err
+	}
+
+	return applyMap(reflect.ValueOf(dst).Elem(), fields, input, false)
 }
 
 type resolvedStructField struct {
