@@ -16,7 +16,6 @@ type funcParamInfo struct {
 }
 
 type funcInfo struct {
-	Value      reflect.Value
 	Params     []funcParamInfo
 	Returns    []reflect.Type
 	IsVariadic bool
@@ -40,12 +39,12 @@ func InspectFunc(fn any) (fi funcInfo, err error) {
 		return fi, ErrNotAFunc
 	}
 
-	fi.Value = reflect.ValueOf(fn)
-	typ := fi.Value.Type()
+	typ := reflect.TypeOf(fn)
 
-	// Check if this func has already been inspected and is in the cache
-	if fi, found := funcCache.Load(typ); found {
-		return fi.(funcInfo), nil
+	// funcInfo holds only signature-derived metadata, so it is safe to share
+	// across every function of this type.
+	if cached, found := funcCache.Load(typ); found {
+		return cached.(funcInfo), nil
 	}
 
 	if typ.Kind() != reflect.Func {
@@ -142,9 +141,10 @@ func Call(fn any, inputs []any, opts ...CallOption) ([]reflect.Value, error) {
 		args = append(args, value)
 	}
 
+	fnVal := reflect.ValueOf(fn)
 	if useCallSlice {
-		return fi.Value.CallSlice(args), nil
+		return fnVal.CallSlice(args), nil
 	}
 
-	return fi.Value.Call(args), nil
+	return fnVal.Call(args), nil
 }

@@ -71,6 +71,32 @@ func TestInspectFunc(t *testing.T) {
 	})
 }
 
+func TestCallDistinguishesSameSignatureFuncs(t *testing.T) {
+	funcCache.Clear()
+
+	// Two different functions with the identical signature func(int) int. The
+	// first call caches the type metadata; the second must still invoke itself,
+	// not the cached function.
+	a := func(x int) int { return x + 1 }
+	b := func(x int) int { return x + 100 }
+
+	out1, err := Call(a, []any{10})
+	if err != nil {
+		t.Fatalf("Call(a) error = %v", err)
+	}
+	out2, err := Call(b, []any{10})
+	if err != nil {
+		t.Fatalf("Call(b) error = %v", err)
+	}
+
+	if got := out1[0].Interface(); got != 11 {
+		t.Fatalf("a(10) = %v, want 11", got)
+	}
+	if got := out2[0].Interface(); got != 110 {
+		t.Fatalf("b(10) = %v, want 110 (called the wrong function)", got)
+	}
+}
+
 func TestCall(t *testing.T) {
 	funcCache.Clear()
 
