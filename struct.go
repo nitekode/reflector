@@ -175,10 +175,10 @@ func NewStruct[T any](opts ...StructOption) (T, error) {
 
 		target, err := fieldByIndexAlloc(structInst, field.Index)
 		if err != nil {
-			return zero, fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
+			return zero, &FieldError{Field: field.name, Index: field.Index, Err: err}
 		}
 		if err := field.decode(target, field.defaultValue); err != nil {
-			return zero, fmt.Errorf("reflector: failed to decode default for field %q with value %q: %w", field.name, field.defaultValue, err)
+			return zero, &FieldError{Field: field.name, Index: field.Index, Err: fmt.Errorf("decode default %q: %w", field.defaultValue, err)}
 		}
 	}
 
@@ -215,7 +215,7 @@ func ToMap(strct any, opts ...StructOption) (map[string]string, error) {
 		}
 		val, err := field.encode(fv)
 		if err != nil {
-			return nil, fmt.Errorf("reflector: failed to encode field %q: %w", field.name, err)
+			return nil, &FieldError{Field: field.name, Index: field.Index, Err: err}
 		}
 		out[field.name] = val
 	}
@@ -287,7 +287,7 @@ func FillFromStruct[T any](dst *T, src any) error {
 		dstPath := append(slices.Clone(basePath), field.Index...)
 		target, err := fieldByIndexAlloc(dstVal, dstPath)
 		if err != nil {
-			return fmt.Errorf("reflector: failed to address field %q: %w", field.Name, err)
+			return &FieldError{Field: field.Name, Index: dstPath, Err: err}
 		}
 		target.Set(srcVal.FieldByIndex(field.Index))
 	}
@@ -330,10 +330,10 @@ func FillFromMap[T any](dst *T, input map[string]string, opts ...StructOption) e
 
 		target, err := fieldByIndexAlloc(dstVal, field.Index)
 		if err != nil {
-			return fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
+			return &FieldError{Field: field.name, Index: field.Index, Err: err}
 		}
 		if err := field.decode(target, value); err != nil {
-			return fmt.Errorf("reflector: failed to decode field %q with value %q: %w", field.name, value, err)
+			return &FieldError{Field: field.name, Index: field.Index, Err: fmt.Errorf("decode %q: %w", value, err)}
 		}
 	}
 

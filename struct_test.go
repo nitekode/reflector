@@ -358,8 +358,15 @@ func TestNewStructErrors(t *testing.T) {
 		}
 
 		_, err := NewStruct[sample](WithDefaultTag("default"))
-		if err == nil || !strings.Contains(err.Error(), `failed to decode default for field "Age"`) {
-			t.Fatalf("NewStruct() error = %v, want default decode error for Age", err)
+		var fieldErr *FieldError
+		if !errors.As(err, &fieldErr) {
+			t.Fatalf("NewStruct() error = %v, want *FieldError", err)
+		}
+		if fieldErr.Field != "Age" {
+			t.Fatalf("FieldError.Field = %q, want %q", fieldErr.Field, "Age")
+		}
+		if !strings.Contains(fieldErr.Error(), "decode default") {
+			t.Fatalf("FieldError message = %q, want it to mention decode default", fieldErr.Error())
 		}
 	})
 
@@ -695,6 +702,37 @@ func TestFillFromMapWithNameTag(t *testing.T) {
 	}
 }
 
+func TestFieldErrorCarriesFieldContext(t *testing.T) {
+	structCache.Clear()
+
+	type global struct {
+		Level int `flag:"level"`
+	}
+	type command struct {
+		global
+		Name string `flag:"name"`
+	}
+
+	cmd := command{}
+	err := FillFromMap(&cmd, map[string]string{"level": "not-a-number"}, WithNameTag("flag"))
+
+	var fieldErr *FieldError
+	if !errors.As(err, &fieldErr) {
+		t.Fatalf("error = %v, want *FieldError", err)
+	}
+	if fieldErr.Field != "level" {
+		t.Fatalf("FieldError.Field = %q, want %q", fieldErr.Field, "level")
+	}
+	// Level is promoted from the embedded global, so its path goes through it.
+	if !reflect.DeepEqual(fieldErr.Index, []int{0, 0}) {
+		t.Fatalf("FieldError.Index = %v, want [0 0]", fieldErr.Index)
+	}
+	// The underlying cause is still reachable through the FieldError.
+	if !strings.Contains(err.Error(), "not-a-number") {
+		t.Fatalf("error = %q, want it to mention the bad value", err.Error())
+	}
+}
+
 func TestFillFromMapErrors(t *testing.T) {
 	structCache.Clear()
 
@@ -705,8 +743,12 @@ func TestFillFromMapErrors(t *testing.T) {
 
 		s := sample{}
 		err := FillFromMap(&s, map[string]string{"Age": "not-a-number"})
-		if err == nil || !strings.Contains(err.Error(), `failed to decode field "Age"`) {
-			t.Fatalf("FillFromMap() error = %v, want decode error for Age", err)
+		var fieldErr *FieldError
+		if !errors.As(err, &fieldErr) {
+			t.Fatalf("FillFromMap() error = %v, want *FieldError", err)
+		}
+		if fieldErr.Field != "Age" {
+			t.Fatalf("FieldError.Field = %q, want %q", fieldErr.Field, "Age")
 		}
 	})
 

@@ -122,33 +122,46 @@ a `func() (T, error)` gives you `[]any{T}` and the error.
 `ErrNotAStruct`, and the typed `ErrDecoderUnsupportedType` / `ErrEncoderUnsupportedType`
 (both carry the offending `Type`).
 
+When `FillFromMap`, `NewStruct`, or `FillFromStruct` fail on a specific field, they
+return a `*FieldError` that carries the field's `Name` and `Index` path, so you can
+tell which field failed without parsing the message. It unwraps to the underlying
+cause, so `errors.As` still reaches errors like `ErrDecoderUnsupportedType`:
+
+```go
+err := reflector.FillFromMap(&cfg, values, reflector.WithNameTag("json"))
+var fe *reflector.FieldError
+if errors.As(err, &fe) {
+	fmt.Printf("field %q is invalid: %v\n", fe.Field, fe.Err)
+}
+```
+
 ## Advanced Usage
 
-### Building one struct from several pieces (the CLI pattern)
+### Building one struct from several pieces
 
 Each function does one job, so filling a struct from more than one source stays predictable:
 
 ```go
-type Global struct {
-	Verbose bool `flag:"verbose" default:"false"`
+type Logging struct {
+	Level string `env:"LOG_LEVEL" default:"info"`
 }
-type Group struct {
-	Global
-	Greeting string `flag:"greeting" default:"hello"`
+type Server struct {
+	Logging
+	Port int `env:"PORT" default:"8080"`
 }
-type Command struct {
-	Group
-	Name string `flag:"name"`
+type App struct {
+	Server
+	Name string `env:"APP_NAME"`
 }
 
 // 1. Construct with defaults applied at every embedded level.
-cmd, _ := reflector.NewStruct[Command](reflector.WithDefaultTag("default"))
+app, _ := reflector.NewStruct[App](reflector.WithDefaultTag("default"))
 
-// 2. Overlay parsed flags, matched by the flag tag.
-reflector.FillFromMap(&cmd, map[string]string{"greeting": "hi"}, reflector.WithNameTag("flag"))
+// 2. Overlay values from somewhere else, matched by the env tag.
+reflector.FillFromMap(&app, map[string]string{"PORT": "9000"}, reflector.WithNameTag("env"))
 
-// 3. Or compose from an independently-built scope struct.
-reflector.FillFromStruct(&cmd, Global{Verbose: true})
+// 3. Or copy values in from a separately-built piece.
+reflector.FillFromStruct(&app, Logging{Level: "debug"})
 ```
 
 The contract:
