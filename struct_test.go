@@ -34,24 +34,54 @@ func TestInspectStruct(t *testing.T) {
 	if si.Type != reflect.TypeFor[sample]() {
 		t.Fatalf("Type = %v, want %v", si.Type, reflect.TypeFor[sample]())
 	}
+
+	// Fields are flattened: the promoted Flag plus the three exported direct
+	// fields. The anonymous embedded field and the unexported alive are not
+	// leaf fields.
 	if len(si.Fields) != 4 {
 		t.Fatalf("len(Fields) = %d, want 4", len(si.Fields))
 	}
-	if si.Fields[0] == nil || !si.Fields[0].IsAnonymous {
-		t.Fatal("expected first field to be the exported anonymous embedded field")
+
+	flag := fieldByName(si, "Flag")
+	if flag == nil {
+		t.Fatal("expected promoted Flag field")
 	}
-	if si.Fields[0].Index != 0 {
-		t.Fatalf("embedded field index = %d, want 0", si.Fields[0].Index)
+	if flag.FromEmbedded != reflect.TypeFor[Embedded]() {
+		t.Fatalf("Flag.FromEmbedded = %v, want %v", flag.FromEmbedded, reflect.TypeFor[Embedded]())
 	}
-	if si.Fields[3].Index != 3 {
-		t.Fatalf("Score field index = %d, want 3", si.Fields[3].Index)
+	if !reflect.DeepEqual(flag.Index, []int{0, 0}) {
+		t.Fatalf("Flag.Index = %v, want [0 0]", flag.Index)
 	}
-	if si.Fields[1].Tags["json"] != "name" {
-		t.Fatalf("Name json tag = %q, want %q", si.Fields[1].Tags["json"], "name")
+
+	name := fieldByName(si, "Name")
+	if name == nil {
+		t.Fatal("expected Name field")
 	}
-	if si.Fields[1].Tags["note"] != "has spaces" {
-		t.Fatalf("Name note tag = %q, want %q", si.Fields[1].Tags["note"], "has spaces")
+	if name.FromEmbedded != nil {
+		t.Fatalf("Name.FromEmbedded = %v, want nil", name.FromEmbedded)
 	}
+	if !reflect.DeepEqual(name.Index, []int{1}) {
+		t.Fatalf("Name.Index = %v, want [1]", name.Index)
+	}
+	if name.Tags["json"] != "name" {
+		t.Fatalf("Name json tag = %q, want %q", name.Tags["json"], "name")
+	}
+	if name.Tags["note"] != "has spaces" {
+		t.Fatalf("Name note tag = %q, want %q", name.Tags["note"], "has spaces")
+	}
+
+	if !si.Embeds(Embedded{}) {
+		t.Fatal("expected sample to embed Embedded")
+	}
+}
+
+func fieldByName(si structInfo, name string) *structFieldInfo {
+	for _, f := range si.Fields {
+		if f.Name == name {
+			return f
+		}
+	}
+	return nil
 }
 
 func TestInspectStructErrors(t *testing.T) {
@@ -145,10 +175,10 @@ func TestStructInfoEmbeds(t *testing.T) {
 			want:   true,
 		},
 		{
-			name:   "promoted nested target does not match",
+			name:   "transitively nested target matches",
 			si:     directOnlyInfo,
 			target: reflect.TypeFor[Embedded](),
-			want:   false,
+			want:   true,
 		},
 		{
 			name:   "unrelated type does not match",
@@ -183,7 +213,7 @@ func TestStructInfoEmbeds(t *testing.T) {
 	}
 }
 
-func TestStructInfoEmbedsWithOmittedUnexportedField(t *testing.T) {
+func TestStructInfoEmbedsUnexportedField(t *testing.T) {
 	structCache.Clear()
 
 	type group struct {
@@ -200,8 +230,9 @@ func TestStructInfoEmbedsWithOmittedUnexportedField(t *testing.T) {
 		t.Fatalf("InspectStruct() error = %v", err)
 	}
 
-	if got := si.Embeds(group{}); got {
-		t.Fatalf("Embeds(group{}) = %v, want false", got)
+	// Unexported embeds are still navigable, so Embeds reports them.
+	if got := si.Embeds(group{}); !got {
+		t.Fatalf("Embeds(group{}) = %v, want true", got)
 	}
 }
 
@@ -323,7 +354,7 @@ func TestNewStructWithDefaultTagAndNameTag(t *testing.T) {
 	}
 }
 
-func TestNewStructIgnoresAnonymousEmbeddedFields(t *testing.T) {
+func TestNewStructPopulatesPromotedFields(t *testing.T) {
 	structCache.Clear()
 
 	type Common struct {
@@ -344,7 +375,8 @@ func TestNewStructIgnoresAnonymousEmbeddedFields(t *testing.T) {
 	}
 
 	want := sample{
-		Name: "alice",
+		Common: Common{Verbose: true},
+		Name:   "alice",
 	}
 	if got != want {
 		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
@@ -499,7 +531,7 @@ func TestToMapWithNameTag(t *testing.T) {
 	}
 }
 
-func TestToMapIgnoresAnonymousEmbeddedFields(t *testing.T) {
+func TestToMapIncludesPromotedFields(t *testing.T) {
 	structCache.Clear()
 
 	type Common struct {
@@ -520,7 +552,8 @@ func TestToMapIgnoresAnonymousEmbeddedFields(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"Name": "alice",
+		"Verbose": "true",
+		"Name":    "alice",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ToMap() = %#v, want %#v", got, want)
@@ -568,6 +601,59 @@ func TestToMapErrors(t *testing.T) {
 			t.Fatalf("ToMap() error = %v, want duplicate field name error", err)
 		}
 	})
+}
+
+func TestFill(t *testing.T) {
+	structCache.Clear()
+
+	type global struct {
+		Verbose  bool
+		internal int
+	}
+	type group struct {
+		global
+		Greeting string
+	}
+	type command struct {
+		group
+		Name string
+	}
+
+	cmd := command{Name: "deploy"}
+
+	// Each source carries only its own fields, mirroring independent parsing.
+	if err := Fill(&cmd, group{Greeting: "hello"}); err != nil {
+		t.Fatalf("Fill(group) error = %v", err)
+	}
+	// Filling global after group must not clobber the Greeting set above:
+	// own-fields merge makes the order irrelevant.
+	if err := Fill(&cmd, global{Verbose: true}); err != nil {
+		t.Fatalf("Fill(global) error = %v", err)
+	}
+
+	want := command{
+		group: group{
+			global:   global{Verbose: true},
+			Greeting: "hello",
+		},
+		Name: "deploy",
+	}
+	if cmd != want {
+		t.Fatalf("Fill() = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestFillRejectsNonEmbedded(t *testing.T) {
+	structCache.Clear()
+
+	type other struct{ X int }
+	type command struct{ Name string }
+
+	cmd := command{}
+	err := Fill(&cmd, other{X: 1})
+	if err == nil || !strings.Contains(err.Error(), "does not embed") {
+		t.Fatalf("Fill() error = %v, want does-not-embed error", err)
+	}
 }
 
 func TestParseStructTag(t *testing.T) {

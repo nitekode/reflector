@@ -3,6 +3,7 @@ package reflector
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,21 +12,43 @@ import (
 var structCache sync.Map
 
 type structFieldInfo struct {
-	Index       int
-	Name        string
-	Type        reflect.Type
-	Kind        reflect.Kind
-	IsAnonymous bool
-	Tags        map[string]string
-	Encode      fieldEncoder
-	Decode      fieldDecoder
+	// Index locates the field from the top struct. It has one element per
+	// step you take to reach it. A field declared directly on the struct is
+	// just [2]; a field reached by going into embedded struct 0 and then its
+	// field 1 is [0, 1]. Pass it to reflect.Value.FieldByIndex to get there.
+	Index []int
+	Name  string
+	Type  reflect.Type
+	Kind  reflect.Kind
+	Tags  map[string]string
+	// FromEmbedded is set when this field actually lives on an embedded
+	// struct and was promoted up to the top struct. It holds that embedded
+	// struct's type. It is nil for fields declared on the top struct itself.
+	FromEmbedded reflect.Type
+	Encode       fieldEncoder
+	Decode       fieldDecoder
+}
+
+// embeddedStructInfo describes one struct that is embedded inside another.
+type embeddedStructInfo struct {
+	Name string
+	Type reflect.Type
+	// Path locates the embedded struct from the top struct, the same way
+	// structFieldInfo.Index locates a field.
+	Path []int
 }
 
 type structInfo struct {
-	Name            string
-	Type            reflect.Type
-	Fields          []*structFieldInfo
-	EmbeddedStructs []*structFieldInfo
+	Name string
+	Type reflect.Type
+	// Fields lists every exported value-holding field, including ones that
+	// come from embedded structs (those are pulled up to this list rather
+	// than nested). The embedded structs themselves are not in this list;
+	// they are in EmbeddedStructs.
+	Fields []*structFieldInfo
+	// EmbeddedStructs lists every embedded struct, at any depth, not just the
+	// ones embedded directly. Unexported embeds are included too.
+	EmbeddedStructs []embeddedStructInfo
 }
 
 type structOptions struct {
@@ -47,23 +70,16 @@ func WithDefaultTag(tag string) StructOption {
 	}
 }
 
+// Embeds reports whether target's type is embedded in this struct, at any
+// depth. target may be a struct value, a pointer to one, or a reflect.Type.
 func (si structInfo) Embeds(target any) bool {
 	targetType, ok := normalizeEmbeddedStructType(target)
 	if !ok {
 		return false
 	}
 
-	for _, field := range si.Fields {
-		if !field.IsAnonymous {
-			continue
-		}
-
-		fieldType, ok := normalizeEmbeddedStructType(field.Type)
-		if !ok {
-			continue
-		}
-
-		if fieldType == targetType {
+	for _, emb := range si.EmbeddedStructs {
+		if emb.Type == targetType {
 			return true
 		}
 	}
@@ -84,8 +100,8 @@ func InspectStruct(s any) (si structInfo, err error) {
 	}
 
 	// Check if this struct has already been inspected and is in the cache
-	if si, found := structCache.Load(typ); found {
-		return si.(structInfo), nil
+	if cached, found := structCache.Load(typ); found {
+		return cached.(structInfo), nil
 	}
 
 	if typ.Kind() != reflect.Struct {
@@ -95,23 +111,34 @@ func InspectStruct(s any) (si structInfo, err error) {
 	si.Name = typ.Name()
 	si.Type = typ
 
-	si.Fields = make([]*structFieldInfo, 0, typ.NumField())
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
+	for _, field := range reflect.VisibleFields(typ) {
+		// An embedded struct (or pointer to one) is recorded so we know where
+		// it lives, but it is not itself a value-holding field, so skip adding
+		// it to Fields.
+		if field.Anonymous {
+			if embType, ok := derefStructType(field.Type); ok {
+				si.EmbeddedStructs = append(si.EmbeddedStructs, embeddedStructInfo{
+					Name: field.Name,
+					Type: embType,
+					Path: slices.Clone(field.Index),
+				})
+				continue
+			}
+		}
 
 		if !field.IsExported() {
 			continue
 		}
 
 		fi := structFieldInfo{
-			Index:       i,
-			Name:        field.Name,
-			Type:        field.Type,
-			Kind:        field.Type.Kind(),
-			IsAnonymous: field.Anonymous,
-			Tags:        parseStructTag(string(field.Tag)),
-			Encode:      pickEncoder(field.Type),
-			Decode:      pickDecoder(field.Type),
+			Index:        slices.Clone(field.Index),
+			Name:         field.Name,
+			Type:         field.Type,
+			Kind:         field.Type.Kind(),
+			Tags:         parseStructTag(string(field.Tag)),
+			FromEmbedded: declaringStructType(typ, field.Index),
+			Encode:       pickEncoder(field.Type),
+			Decode:       pickDecoder(field.Type),
 		}
 		si.Fields = append(si.Fields, &fi)
 	}
@@ -119,7 +146,7 @@ func InspectStruct(s any) (si structInfo, err error) {
 	// Put the inspected struct in the cache and prime it
 	structCache.LoadOrStore(typ, si)
 
-	return
+	return si, nil
 }
 
 func NewStruct[T any](strct T, input map[string]string, opts ...StructOption) (T, error) {
@@ -137,14 +164,22 @@ func NewStruct[T any](strct T, input map[string]string, opts ...StructOption) (T
 	structInst := reflect.New(si.Type).Elem()
 	for _, field := range fields {
 		if value, found := input[field.name]; found {
-			if err := field.Decode(structInst.Field(field.Index), value); err != nil {
+			target, err := fieldByIndexAlloc(structInst, field.Index)
+			if err != nil {
+				return strct, fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
+			}
+			if err := field.Decode(target, value); err != nil {
 				return strct, fmt.Errorf("reflector: failed to decode field %q with value %q: %w", field.name, value, err)
 			}
 			continue
 		}
 
 		if field.hasDefault {
-			if err := field.Decode(structInst.Field(field.Index), field.defaultValue); err != nil {
+			target, err := fieldByIndexAlloc(structInst, field.Index)
+			if err != nil {
+				return strct, fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
+			}
+			if err := field.Decode(target, field.defaultValue); err != nil {
 				return strct, fmt.Errorf("reflector: failed to decode default for field %q with value %q: %w", field.name, field.defaultValue, err)
 			}
 		}
@@ -175,7 +210,13 @@ func ToMap(strct any, opts ...StructOption) (map[string]string, error) {
 
 	out := make(map[string]string, len(fields))
 	for _, field := range fields {
-		val, err := field.Encode(v.Field(field.Index))
+		fv, err := v.FieldByIndexErr(field.Index)
+		if err != nil {
+			// The field is inside an embedded pointer that is nil, so there
+			// is no value to read. Skip it.
+			continue
+		}
+		val, err := field.Encode(fv)
 		if err != nil {
 			return nil, fmt.Errorf("reflector: failed to encode field %q: %w", field.name, err)
 		}
@@ -183,6 +224,78 @@ func ToMap(strct any, opts ...StructOption) (map[string]string, error) {
 	}
 
 	return out, nil
+}
+
+// Fill copies values from src into dst.
+//
+// dst must contain src's type as an embedded struct (at any depth), or be that
+// type itself. Fill finds where src belongs inside dst and copies src's values
+// into that spot.
+//
+// Only the fields that src declares on its own are copied. Anything src itself
+// got from its own embedded structs is ignored. This matters when you fill dst
+// from several sources: each source only writes its own fields, so they never
+// overwrite each other and the order you call Fill in does not matter.
+//
+// src may be a struct value or a pointer to one.
+func Fill[T any](dst *T, src any) error {
+	if dst == nil || src == nil {
+		return ErrNotAStruct
+	}
+
+	dstInfo, err := InspectStruct(*dst)
+	if err != nil {
+		return err
+	}
+
+	srcType, ok := normalizeEmbeddedStructType(src)
+	if !ok {
+		return ErrNotAStruct
+	}
+
+	var basePath []int
+	if srcType != dstInfo.Type {
+		found := false
+		for _, emb := range dstInfo.EmbeddedStructs {
+			if emb.Type == srcType {
+				basePath = emb.Path
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("reflector: %s does not embed %s", dstInfo.Name, srcType)
+		}
+	}
+
+	srcInfo, err := InspectStruct(src)
+	if err != nil {
+		return err
+	}
+
+	srcVal := reflect.ValueOf(src)
+	for srcVal.Kind() == reflect.Pointer {
+		if srcVal.IsNil() {
+			return ErrNotAStruct
+		}
+		srcVal = srcVal.Elem()
+	}
+
+	dstVal := reflect.ValueOf(dst).Elem()
+	for _, field := range srcInfo.Fields {
+		if field.FromEmbedded != nil {
+			continue // skip fields src got from its own embeds; copy only its own
+		}
+
+		dstPath := append(slices.Clone(basePath), field.Index...)
+		target, err := fieldByIndexAlloc(dstVal, dstPath)
+		if err != nil {
+			return fmt.Errorf("reflector: failed to address field %q: %w", field.Name, err)
+		}
+		target.Set(srcVal.FieldByIndex(field.Index))
+	}
+
+	return nil
 }
 
 type resolvedStructField struct {
@@ -242,27 +355,78 @@ func parseStructTag(raw string) map[string]string {
 	return result
 }
 
+// derefStructType follows t through any pointers (e.g. **T -> T) and returns
+// the struct type at the end. The bool is false if t is nil or does not end at
+// a struct.
+func derefStructType(t reflect.Type) (reflect.Type, bool) {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == nil || t.Kind() != reflect.Struct {
+		return nil, false
+	}
+	return t, true
+}
+
+// declaringStructType answers "which struct does this field actually belong
+// to?" for a field at the given index path inside top. If the field came from
+// an embedded struct, it returns that embedded struct's type. If the field is
+// declared on top directly (a one-step path), it returns nil.
+func declaringStructType(top reflect.Type, index []int) reflect.Type {
+	if len(index) <= 1 {
+		return nil
+	}
+
+	t := top
+	for _, idx := range index[:len(index)-1] {
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		t = t.Field(idx).Type
+	}
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
+}
+
+// fieldByIndexAlloc walks v along the index path to reach a field, just like
+// reflect.Value.FieldByIndex. The difference: if the path passes through an
+// embedded pointer that is nil, the plain version panics, so here we allocate
+// a new value for it first. That way the field we return can be written to.
+func fieldByIndexAlloc(v reflect.Value, index []int) (reflect.Value, error) {
+	for i, idx := range index {
+		if i > 0 {
+			for v.Kind() == reflect.Pointer {
+				if v.IsNil() {
+					if !v.CanSet() {
+						return reflect.Value{}, fmt.Errorf("cannot allocate nil embedded pointer of type %s", v.Type())
+					}
+					v.Set(reflect.New(v.Type().Elem()))
+				}
+				v = v.Elem()
+			}
+		}
+		v = v.Field(idx)
+	}
+	return v, nil
+}
+
+// normalizeEmbeddedStructType takes target in whatever form the caller passed
+// it — a struct value, a pointer to one, or a reflect.Type — and returns the
+// plain struct type. The bool is false if target is not (or does not point to)
+// a struct.
 func normalizeEmbeddedStructType(target any) (reflect.Type, bool) {
 	if target == nil {
 		return nil, false
 	}
 
-	var typ reflect.Type
-	if t, ok := target.(reflect.Type); ok {
-		typ = t
-	} else {
+	typ, ok := target.(reflect.Type)
+	if !ok {
 		typ = reflect.TypeOf(target)
 	}
 
-	for typ != nil && typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-
-	if typ == nil || typ.Kind() != reflect.Struct {
-		return nil, false
-	}
-
-	return typ, true
+	return derefStructType(typ)
 }
 
 func parseStructOptions(opts []StructOption) structOptions {
@@ -281,12 +445,6 @@ func resolveStructFields(fields []*structFieldInfo, opts structOptions) ([]resol
 	seen := make(map[string]struct{}, len(fields))
 
 	for _, field := range fields {
-		// Anonymous embeds are exposed for inspection via Fields/Embeds,
-		// but map conversion only operates on direct named fields.
-		if field.IsAnonymous {
-			continue
-		}
-
 		name, ok := resolveStructFieldName(field, opts)
 		if !ok {
 			continue
