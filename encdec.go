@@ -8,7 +8,55 @@ import (
 type fieldEncoder func(field reflect.Value) (string, error)
 type fieldDecoder func(field reflect.Value, raw string) error
 
+// customEncoders and customDecoders hold converters registered for specific
+// types via AddEncoder and AddDecoder. pickEncoder and pickDecoder check them
+// before falling back to the built-in kind switches.
+//
+// Writes happen through AddEncoder/AddDecoder, reads happen when a struct is
+// first inspected. Register your custom types before the library inspects any
+// struct that uses them (in practice, at program start) so there is no
+// concurrent write and read.
+var (
+	customDecoders = map[reflect.Type]fieldDecoder{}
+	customEncoders = map[reflect.Type]fieldEncoder{}
+)
+
+// AddDecoder registers a decoder for type T. After this, any struct field of
+// type T is filled by calling fn with the raw string instead of using the
+// built-in decoding. This is how you teach reflector a type its built-in
+// decoding does not cover, such as time.Duration or your own named types.
+//
+// A decoder registered for T takes priority over the built-in handling for T's
+// kind, so it also works for named types whose underlying kind is a built-in
+// one (time.Duration is an int64, for example). Registering T again replaces
+// the earlier decoder.
+func AddDecoder[T any](fn func(raw string) (T, error)) {
+	t := reflect.TypeOf((*T)(nil)).Elem()
+	customDecoders[t] = func(field reflect.Value, raw string) error {
+		v, err := fn(raw)
+		if err != nil {
+			return err
+		}
+		field.Set(reflect.ValueOf(v))
+		return nil
+	}
+}
+
+// AddEncoder registers an encoder for type T. After this, any struct field of
+// type T is turned into a string by calling fn instead of using the built-in
+// encoding. It is the encode-side counterpart to AddDecoder and follows the
+// same priority and replacement rules.
+func AddEncoder[T any](fn func(v T) (string, error)) {
+	t := reflect.TypeOf((*T)(nil)).Elem()
+	customEncoders[t] = func(field reflect.Value) (string, error) {
+		return fn(field.Interface().(T))
+	}
+}
+
 func pickEncoder(t reflect.Type) fieldEncoder {
+	if h, ok := customEncoders[t]; ok {
+		return h
+	}
 	switch t.Kind() {
 	case reflect.String:
 		return func(f reflect.Value) (string, error) {
@@ -34,6 +82,9 @@ func pickEncoder(t reflect.Type) fieldEncoder {
 }
 
 func pickDecoder(t reflect.Type) fieldDecoder {
+	if h, ok := customDecoders[t]; ok {
+		return h
+	}
 	switch t.Kind() {
 	case reflect.String:
 		return func(f reflect.Value, raw string) error {
