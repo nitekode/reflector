@@ -243,64 +243,19 @@ func TestNewStruct(t *testing.T) {
 		Name   string
 		Age    int
 		Active bool
-		Score  float64
 	}
 
-	got, err := NewStruct(sample{}, map[string]string{
-		"Name":   "alice",
-		"Age":    "42",
-		"Active": "true",
-		"Score":  "12.5",
-	})
+	// With no default tag configured, NewStruct just returns the zero value.
+	got, err := NewStruct[sample]()
 	if err != nil {
 		t.Fatalf("NewStruct() error = %v", err)
 	}
-
-	want := sample{
-		Name:   "alice",
-		Age:    42,
-		Active: true,
-		Score:  12.5,
-	}
-	if got != want {
-		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
+	if got != (sample{}) {
+		t.Fatalf("NewStruct() = %#v, want zero value", got)
 	}
 }
 
-func TestNewStructWithNameTag(t *testing.T) {
-	structCache.Clear()
-
-	type sample struct {
-		Name   string  `json:"name"`
-		Age    int     `json:"age,omitempty"`
-		Score  float64 `json:"score"`
-		Hidden string  `json:"-"`
-		Active bool
-	}
-
-	got, err := NewStruct(sample{}, map[string]string{
-		"name":   "alice",
-		"age":    "42",
-		"score":  "12.5",
-		"Hidden": "ignored",
-		"Active": "true",
-	}, WithNameTag("json"))
-	if err != nil {
-		t.Fatalf("NewStruct() error = %v", err)
-	}
-
-	want := sample{
-		Name:   "alice",
-		Age:    42,
-		Score:  12.5,
-		Active: true,
-	}
-	if got != want {
-		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
-	}
-}
-
-func TestNewStructWithDefaultTag(t *testing.T) {
+func TestNewStructAppliesDefaults(t *testing.T) {
 	structCache.Clear()
 
 	type sample struct {
@@ -311,7 +266,7 @@ func TestNewStructWithDefaultTag(t *testing.T) {
 		Empty  string  `default:""`
 	}
 
-	got, err := NewStruct(sample{}, map[string]string{}, WithDefaultTag("default"))
+	got, err := NewStruct[sample](WithDefaultTag("default"))
 	if err != nil {
 		t.Fatalf("NewStruct() error = %v", err)
 	}
@@ -327,7 +282,42 @@ func TestNewStructWithDefaultTag(t *testing.T) {
 	}
 }
 
-func TestNewStructWithDefaultTagAndNameTag(t *testing.T) {
+func TestNewStructAppliesEmbeddedDefaults(t *testing.T) {
+	structCache.Clear()
+
+	type global struct {
+		Verbose bool `default:"true"`
+	}
+	type group struct {
+		global
+		Greeting string `default:"hi"`
+	}
+	type command struct {
+		group
+		Name string `default:"deploy"`
+	}
+
+	// Defaults are applied at every depth, not just on the top struct: the
+	// promoted Verbose field carries its default tag and is written through the
+	// embedded structs.
+	got, err := NewStruct[command](WithDefaultTag("default"))
+	if err != nil {
+		t.Fatalf("NewStruct() error = %v", err)
+	}
+
+	want := command{
+		group: group{
+			global:   global{Verbose: true},
+			Greeting: "hi",
+		},
+		Name: "deploy",
+	}
+	if got != want {
+		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
+	}
+}
+
+func TestNewStructThenFillFromMap(t *testing.T) {
 	structCache.Clear()
 
 	type sample struct {
@@ -336,114 +326,38 @@ func TestNewStructWithDefaultTagAndNameTag(t *testing.T) {
 		Age   int    `json:"age" default:"42"`
 	}
 
-	got, err := NewStruct(sample{}, map[string]string{
+	// The intended layering: defaults form the base, the parsed map overlays
+	// them, and fields the map omits keep their default.
+	got, err := NewStruct[sample](WithDefaultTag("default"))
+	if err != nil {
+		t.Fatalf("NewStruct() error = %v", err)
+	}
+	if err := FillFromMap(&got, map[string]string{
 		"name":  "bob",
 		"alias": "",
-	}, WithNameTag("json"), WithDefaultTag("default"))
-	if err != nil {
-		t.Fatalf("NewStruct() error = %v", err)
+	}, WithNameTag("json")); err != nil {
+		t.Fatalf("FillFromMap() error = %v", err)
 	}
 
 	want := sample{
-		Name:  "bob",
-		Alias: "",
-		Age:   42,
+		Name:  "bob", // overlaid by the map
+		Alias: "",    // overlaid with an empty value
+		Age:   42,    // omitted by the map, default kept
 	}
 	if got != want {
-		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
-	}
-}
-
-func TestNewStructPopulatesPromotedFields(t *testing.T) {
-	structCache.Clear()
-
-	type Common struct {
-		Verbose bool
-	}
-
-	type sample struct {
-		Common
-		Name string
-	}
-
-	got, err := NewStruct(sample{}, map[string]string{
-		"Verbose": "true",
-		"Name":    "alice",
-	})
-	if err != nil {
-		t.Fatalf("NewStruct() error = %v", err)
-	}
-
-	want := sample{
-		Common: Common{Verbose: true},
-		Name:   "alice",
-	}
-	if got != want {
-		t.Fatalf("NewStruct() = %#v, want %#v", got, want)
+		t.Fatalf("result = %#v, want %#v", got, want)
 	}
 }
 
 func TestNewStructErrors(t *testing.T) {
 	structCache.Clear()
 
-	t.Run("decode failure", func(t *testing.T) {
-		type sample struct {
-			Age int
-		}
-
-		_, err := NewStruct(sample{}, map[string]string{"Age": "not-a-number"})
-		if err == nil || !strings.Contains(err.Error(), `failed to decode field "Age"`) {
-			t.Fatalf("NewStruct() error = %v, want decode error for Age", err)
-		}
-	})
-
-	t.Run("unsupported decoder", func(t *testing.T) {
-		type sample struct {
-			Labels []string
-		}
-
-		_, err := NewStruct(sample{}, map[string]string{"Labels": "a,b"})
-		var target ErrDecoderUnsupportedType
-		if !errors.As(err, &target) {
-			t.Fatalf("NewStruct() error = %v, want ErrDecoderUnsupportedType", err)
-		}
-		if target.Type != reflect.TypeFor[[]string]() {
-			t.Fatalf("unsupported decoder type = %v, want []string", target.Type)
-		}
-	})
-
-	t.Run("tagged fields do not fall back to field name", func(t *testing.T) {
-		type sample struct {
-			Name string `json:"name"`
-		}
-
-		got, err := NewStruct(sample{}, map[string]string{"Name": "alice"}, WithNameTag("json"))
-		if err != nil {
-			t.Fatalf("NewStruct() error = %v", err)
-		}
-		if got.Name != "" {
-			t.Fatalf("Name = %q, want empty string", got.Name)
-		}
-	})
-
-	t.Run("duplicate tagged names", func(t *testing.T) {
-		type sample struct {
-			First  string `opt:"name"`
-			Second string `opt:"name,omitempty"`
-		}
-
-		_, err := NewStruct(sample{}, map[string]string{"name": "alice"}, WithNameTag("opt"))
-		if err == nil || !strings.Contains(err.Error(), `duplicate field name "name"`) {
-			t.Fatalf("NewStruct() error = %v, want duplicate field name error", err)
-		}
-	})
-
 	t.Run("invalid default value", func(t *testing.T) {
 		type sample struct {
 			Age int `default:"not-a-number"`
 		}
 
-		_, err := NewStruct(sample{}, map[string]string{}, WithDefaultTag("default"))
+		_, err := NewStruct[sample](WithDefaultTag("default"))
 		if err == nil || !strings.Contains(err.Error(), `failed to decode default for field "Age"`) {
 			t.Fatalf("NewStruct() error = %v, want default decode error for Age", err)
 		}
@@ -454,7 +368,7 @@ func TestNewStructErrors(t *testing.T) {
 			Labels []string `default:"a,b"`
 		}
 
-		_, err := NewStruct(sample{}, map[string]string{}, WithDefaultTag("default"))
+		_, err := NewStruct[sample](WithDefaultTag("default"))
 		var target ErrDecoderUnsupportedType
 		if !errors.As(err, &target) {
 			t.Fatalf("NewStruct() error = %v, want ErrDecoderUnsupportedType", err)
@@ -752,22 +666,92 @@ func TestFillFromMapWithNameTag(t *testing.T) {
 	structCache.Clear()
 
 	type config struct {
-		Level string `json:"level"`
-		Count int    `json:"count"`
+		Name   string  `json:"name"`
+		Age    int     `json:"age,omitempty"` // option after the comma is ignored
+		Score  float64 `json:"score"`
+		Hidden string  `json:"-"`             // excluded from matching
+		Active bool                            // no tag: matched by field name
 	}
 
 	cfg := config{}
 	if err := FillFromMap(&cfg, map[string]string{
-		"level": "debug",
-		"count": "3",
+		"name":   "alice",
+		"age":    "42",
+		"score":  "12.5",
+		"Hidden": "ignored",
+		"Active": "true",
 	}, WithNameTag("json")); err != nil {
 		t.Fatalf("FillFromMap() error = %v", err)
 	}
 
-	want := config{Level: "debug", Count: 3}
+	want := config{
+		Name:   "alice",
+		Age:    42,
+		Score:  12.5,
+		Active: true, // Hidden stays empty: json:"-" excludes it
+	}
 	if cfg != want {
 		t.Fatalf("FillFromMap() = %#v, want %#v", cfg, want)
 	}
+}
+
+func TestFillFromMapErrors(t *testing.T) {
+	structCache.Clear()
+
+	t.Run("decode failure", func(t *testing.T) {
+		type sample struct {
+			Age int
+		}
+
+		s := sample{}
+		err := FillFromMap(&s, map[string]string{"Age": "not-a-number"})
+		if err == nil || !strings.Contains(err.Error(), `failed to decode field "Age"`) {
+			t.Fatalf("FillFromMap() error = %v, want decode error for Age", err)
+		}
+	})
+
+	t.Run("unsupported decoder", func(t *testing.T) {
+		type sample struct {
+			Labels []string
+		}
+
+		s := sample{}
+		err := FillFromMap(&s, map[string]string{"Labels": "a,b"})
+		var target ErrDecoderUnsupportedType
+		if !errors.As(err, &target) {
+			t.Fatalf("FillFromMap() error = %v, want ErrDecoderUnsupportedType", err)
+		}
+		if target.Type != reflect.TypeFor[[]string]() {
+			t.Fatalf("unsupported decoder type = %v, want []string", target.Type)
+		}
+	})
+
+	t.Run("tagged fields do not fall back to field name", func(t *testing.T) {
+		type sample struct {
+			Name string `json:"name"`
+		}
+
+		s := sample{}
+		if err := FillFromMap(&s, map[string]string{"Name": "alice"}, WithNameTag("json")); err != nil {
+			t.Fatalf("FillFromMap() error = %v", err)
+		}
+		if s.Name != "" {
+			t.Fatalf("Name = %q, want empty string", s.Name)
+		}
+	})
+
+	t.Run("duplicate tagged names", func(t *testing.T) {
+		type sample struct {
+			First  string `opt:"name"`
+			Second string `opt:"name,omitempty"`
+		}
+
+		s := sample{}
+		err := FillFromMap(&s, map[string]string{"name": "alice"}, WithNameTag("opt"))
+		if err == nil || !strings.Contains(err.Error(), `duplicate field name "name"`) {
+			t.Fatalf("FillFromMap() error = %v, want duplicate field name error", err)
+		}
+	})
 }
 
 func TestParseStructTag(t *testing.T) {

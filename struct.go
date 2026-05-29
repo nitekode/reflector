@@ -149,57 +149,40 @@ func InspectStruct(s any) (si structInfo, err error) {
 	return si, nil
 }
 
-func NewStruct[T any](strct T, input map[string]string, opts ...StructOption) (T, error) {
-	si, err := InspectStruct(strct)
+// NewStruct returns a new value of type T with its default-tagged fields set.
+// Defaults are applied only when WithDefaultTag names the tag to read; with no
+// such option the result is simply the zero value. NewStruct does not read any
+// input values — use FillFromMap or FillFromStruct to populate the result.
+func NewStruct[T any](opts ...StructOption) (T, error) {
+	var zero T
+
+	si, err := InspectStruct(zero)
 	if err != nil {
-		return strct, err
+		return zero, err
 	}
 
-	structOpts := parseStructOptions(opts)
-	fields, err := resolveStructFields(si.Fields, structOpts)
+	fields, err := resolveStructFields(si.Fields, parseStructOptions(opts))
 	if err != nil {
-		return strct, err
+		return zero, err
 	}
 
+	// Set each field that carries a default tag; fields without one stay zero.
 	structInst := reflect.New(si.Type).Elem()
-	// Building a fresh value, so applying defaults for fields the input omits
-	// is safe: there is no prior value to overwrite.
-	if err := applyMap(structInst, fields, input, true); err != nil {
-		return strct, err
-	}
-
-	return structInst.Interface().(T), nil
-}
-
-// applyMap writes string values from input into dst's fields. A field is set
-// only when input has a matching key; fields the input omits are left as they
-// are. When applyDefaults is true, a field that is omitted but has a default
-// tag is set to that default instead.
-func applyMap(dst reflect.Value, fields []resolvedStructField, input map[string]string, applyDefaults bool) error {
 	for _, field := range fields {
-		if value, found := input[field.name]; found {
-			target, err := fieldByIndexAlloc(dst, field.Index)
-			if err != nil {
-				return fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
-			}
-			if err := field.Decode(target, value); err != nil {
-				return fmt.Errorf("reflector: failed to decode field %q with value %q: %w", field.name, value, err)
-			}
+		if !field.hasDefault {
 			continue
 		}
 
-		if applyDefaults && field.hasDefault {
-			target, err := fieldByIndexAlloc(dst, field.Index)
-			if err != nil {
-				return fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
-			}
-			if err := field.Decode(target, field.defaultValue); err != nil {
-				return fmt.Errorf("reflector: failed to decode default for field %q with value %q: %w", field.name, field.defaultValue, err)
-			}
+		target, err := fieldByIndexAlloc(structInst, field.Index)
+		if err != nil {
+			return zero, fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
+		}
+		if err := field.Decode(target, field.defaultValue); err != nil {
+			return zero, fmt.Errorf("reflector: failed to decode default for field %q with value %q: %w", field.name, field.defaultValue, err)
 		}
 	}
 
-	return nil
+	return structInst.Interface().(T), nil
 }
 
 func ToMap(strct any, opts ...StructOption) (map[string]string, error) {
@@ -337,7 +320,24 @@ func FillFromMap[T any](dst *T, input map[string]string, opts ...StructOption) e
 		return err
 	}
 
-	return applyMap(reflect.ValueOf(dst).Elem(), fields, input, false)
+	// Write only the fields the input names; fields it omits keep their value.
+	dstVal := reflect.ValueOf(dst).Elem()
+	for _, field := range fields {
+		value, found := input[field.name]
+		if !found {
+			continue
+		}
+
+		target, err := fieldByIndexAlloc(dstVal, field.Index)
+		if err != nil {
+			return fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
+		}
+		if err := field.Decode(target, value); err != nil {
+			return fmt.Errorf("reflector: failed to decode field %q with value %q: %w", field.name, value, err)
+		}
+	}
+
+	return nil
 }
 
 type resolvedStructField struct {
