@@ -28,7 +28,7 @@ func pickEncoder(t reflect.Type) fieldEncoder {
 		}
 	default:
 		return func(f reflect.Value) (string, error) {
-			return "", ErrEncoderUnsupportedType{Type: t}
+			return "", EncodeTypeError{Type: t}
 		}
 	}
 }
@@ -69,7 +69,7 @@ func pickDecoder(t reflect.Type) fieldDecoder {
 		}
 	default:
 		return func(f reflect.Value, raw string) error {
-			return ErrDecoderUnsupportedType{t}
+			return DecodeTypeError{t}
 		}
 	}
 }

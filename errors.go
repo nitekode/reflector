@@ -11,26 +11,26 @@ var (
 	ErrNotAFunc   = errors.New("reflector: not a func")
 )
 
-type ErrDecoderUnsupportedType struct {
+type DecodeTypeError struct {
 	Type reflect.Type
 }
 
-func (e ErrDecoderUnsupportedType) Error() string {
+func (e DecodeTypeError) Error() string {
 	return fmt.Sprintf("decoder has no support for %s", e.Type)
 }
 
-type ErrEncoderUnsupportedType struct {
+type EncodeTypeError struct {
 	Type reflect.Type
 }
 
-func (e ErrEncoderUnsupportedType) Error() string {
+func (e EncodeTypeError) Error() string {
 	return fmt.Sprintf("encoder has no support for %s", e.Type)
 }
 
 // FieldError reports a failure while decoding, encoding, or reaching a specific
 // struct field. Field is the field's resolved name and Index is its path within
 // the struct (see StructFieldInfo.Index). Unwrap returns the underlying cause,
-// so errors.As still reaches errors like ErrDecoderUnsupportedType.
+// so errors.As still reaches errors like DecodeTypeError.
 type FieldError struct {
 	Field string
 	Index []int

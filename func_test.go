@@ -321,9 +321,9 @@ func TestCallWithStringDecoding(t *testing.T) {
 
 	t.Run("unsupported decode type", func(t *testing.T) {
 		_, err := Call(takesSlice, []any{"a,b"}, WithStringDecoding())
-		var target ErrDecoderUnsupportedType
+		var target DecodeTypeError
 		if !errors.As(err, &target) {
-			t.Fatalf("Call() error = %v, want ErrDecoderUnsupportedType", err)
+			t.Fatalf("Call() error = %v, want DecodeTypeError", err)
 		}
 		if target.Type != reflect.TypeFor[[]string]() {
 			t.Fatalf("unsupported decoder type = %v, want []string", target.Type)

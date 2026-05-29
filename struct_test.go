@@ -376,9 +376,9 @@ func TestNewStructErrors(t *testing.T) {
 		}
 
 		_, err := NewStruct[sample](WithDefaultTag("default"))
-		var target ErrDecoderUnsupportedType
+		var target DecodeTypeError
 		if !errors.As(err, &target) {
-			t.Fatalf("NewStruct() error = %v, want ErrDecoderUnsupportedType", err)
+			t.Fatalf("NewStruct() error = %v, want DecodeTypeError", err)
 		}
 		if target.Type != reflect.TypeFor[[]string]() {
 			t.Fatalf("unsupported decoder type = %v, want []string", target.Type)
@@ -490,9 +490,9 @@ func TestToMapErrors(t *testing.T) {
 		}
 
 		_, err := ToMap(sample{Labels: []string{"a", "b"}})
-		var target ErrEncoderUnsupportedType
+		var target EncodeTypeError
 		if !errors.As(err, &target) {
-			t.Fatalf("ToMap() error = %v, want ErrEncoderUnsupportedType", err)
+			t.Fatalf("ToMap() error = %v, want EncodeTypeError", err)
 		}
 		if target.Type != reflect.TypeFor[[]string]() {
 			t.Fatalf("unsupported encoder type = %v, want []string", target.Type)
@@ -759,9 +759,9 @@ func TestFillFromMapErrors(t *testing.T) {
 
 		s := sample{}
 		err := FillFromMap(&s, map[string]string{"Labels": "a,b"})
-		var target ErrDecoderUnsupportedType
+		var target DecodeTypeError
 		if !errors.As(err, &target) {
-			t.Fatalf("FillFromMap() error = %v, want ErrDecoderUnsupportedType", err)
+			t.Fatalf("FillFromMap() error = %v, want DecodeTypeError", err)
 		}
 		if target.Type != reflect.TypeFor[[]string]() {
 			t.Fatalf("unsupported decoder type = %v, want []string", target.Type)
