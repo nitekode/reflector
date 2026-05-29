@@ -8,15 +8,15 @@ import (
 
 var funcCache sync.Map
 
-type funcParamInfo struct {
+type FuncParamInfo struct {
 	Index      int
 	Type       reflect.Type
 	IsVariadic bool
-	Decode     fieldDecoder
+	decode     fieldDecoder
 }
 
-type funcInfo struct {
-	Params     []funcParamInfo
+type FuncInfo struct {
+	Params     []FuncParamInfo
 	Returns    []reflect.Type
 	IsVariadic bool
 	MinArgs    int
@@ -34,29 +34,29 @@ func WithStringDecoding() CallOption {
 	}
 }
 
-func InspectFunc(fn any) (fi funcInfo, err error) {
+func InspectFunc(fn any) (fi FuncInfo, err error) {
 	if fn == nil {
 		return fi, ErrNotAFunc
 	}
 
 	typ := reflect.TypeOf(fn)
 
-	// funcInfo holds only signature-derived metadata, so it is safe to share
+	// FuncInfo holds only signature-derived metadata, so it is safe to share
 	// across every function of this type.
 	if cached, found := funcCache.Load(typ); found {
-		return cached.(funcInfo), nil
+		return cached.(FuncInfo), nil
 	}
 
 	if typ.Kind() != reflect.Func {
 		return fi, ErrNotAFunc
 	}
 
-	fi.Params = make([]funcParamInfo, typ.NumIn())
+	fi.Params = make([]FuncParamInfo, typ.NumIn())
 	for i := 0; i < typ.NumIn(); i++ {
-		fi.Params[i] = funcParamInfo{
+		fi.Params[i] = FuncParamInfo{
 			Index:  i,
 			Type:   typ.In(i),
-			Decode: pickDecoder(typ.In(i)),
+			decode: pickDecoder(typ.In(i)),
 		}
 	}
 
@@ -74,7 +74,7 @@ func InspectFunc(fn any) (fi funcInfo, err error) {
 
 		// Set the last param as variadic
 		fi.Params[len(fi.Params)-1].IsVariadic = true
-		fi.Params[len(fi.Params)-1].Decode = pickDecoder(fi.Params[len(fi.Params)-1].Type.Elem())
+		fi.Params[len(fi.Params)-1].decode = pickDecoder(fi.Params[len(fi.Params)-1].Type.Elem())
 	}
 
 	// Put the inspected func in the cache and prime it
@@ -139,7 +139,7 @@ func Call(fn any, inputs []any, opts ...CallOption) ([]any, error) {
 		if callOpts.stringDecoding {
 			if raw, ok := input.(string); ok && !value.Type().AssignableTo(expectedType) {
 				value = reflect.New(expectedType).Elem()
-				err = pi.Decode(value, raw)
+				err = pi.decode(value, raw)
 				if err != nil {
 					return nil, fmt.Errorf("reflector: param %d - failed to decode string as %s: %w", i, expectedType, err)
 				}

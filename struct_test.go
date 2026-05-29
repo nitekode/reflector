@@ -75,7 +75,7 @@ func TestInspectStruct(t *testing.T) {
 	}
 }
 
-func fieldByName(si structInfo, name string) *structFieldInfo {
+func fieldByName(si StructInfo, name string) *StructFieldInfo {
 	for _, f := range si.Fields {
 		if f.Name == name {
 			return f
@@ -140,7 +140,7 @@ func TestStructInfoEmbeds(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		si     structInfo
+		si     StructInfo
 		target any
 		want   bool
 	}{
@@ -669,8 +669,8 @@ func TestFillFromMapWithNameTag(t *testing.T) {
 		Name   string  `json:"name"`
 		Age    int     `json:"age,omitempty"` // option after the comma is ignored
 		Score  float64 `json:"score"`
-		Hidden string  `json:"-"`             // excluded from matching
-		Active bool                            // no tag: matched by field name
+		Hidden string  `json:"-"` // excluded from matching
+		Active bool    // no tag: matched by field name
 	}
 
 	cfg := config{}

@@ -81,12 +81,13 @@ func InspectStruct(s any) (structInfo, error)
 func InspectFunc(fn any) (funcInfo, error)
 ```
 
-`structInfo` exposes `Fields` (a flattened list of exported fields, including ones
+`StructInfo` exposes `Fields` (a flattened list of exported fields, including ones
 promoted from embedded structs, each with its `Index` path, `Tags`, and
 `FromEmbedded` origin) and `EmbeddedStructs` (every embedded struct, at any depth).
-`si.Embeds(T{})` reports whether `T` is embedded anywhere within.
+`si.Embeds(T{})` reports whether `T` is embedded anywhere within. The element types
+`StructFieldInfo` and `EmbeddedStructInfo` are exported, so you can pass them around.
 
-`funcInfo` exposes `Params`, `Returns`, `IsVariadic`, and `MinArgs`.
+`FuncInfo` exposes `Params`, `Returns`, `IsVariadic`, and `MinArgs`.
 
 ### Build and populate structs
 

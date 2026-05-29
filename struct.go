@@ -11,7 +11,7 @@ import (
 
 var structCache sync.Map
 
-type structFieldInfo struct {
+type StructFieldInfo struct {
 	// Index locates the field from the top struct. It has one element per
 	// step you take to reach it. A field declared directly on the struct is
 	// just [2]; a field reached by going into embedded struct 0 and then its
@@ -25,30 +25,30 @@ type structFieldInfo struct {
 	// struct and was promoted up to the top struct. It holds that embedded
 	// struct's type. It is nil for fields declared on the top struct itself.
 	FromEmbedded reflect.Type
-	Encode       fieldEncoder
-	Decode       fieldDecoder
+	encode       fieldEncoder
+	decode       fieldDecoder
 }
 
-// embeddedStructInfo describes one struct that is embedded inside another.
-type embeddedStructInfo struct {
+// EmbeddedStructInfo describes one struct that is embedded inside another.
+type EmbeddedStructInfo struct {
 	Name string
 	Type reflect.Type
 	// Path locates the embedded struct from the top struct, the same way
-	// structFieldInfo.Index locates a field.
+	// StructFieldInfo.Index locates a field.
 	Path []int
 }
 
-type structInfo struct {
+type StructInfo struct {
 	Name string
 	Type reflect.Type
 	// Fields lists every exported value-holding field, including ones that
 	// come from embedded structs (those are pulled up to this list rather
 	// than nested). The embedded structs themselves are not in this list;
 	// they are in EmbeddedStructs.
-	Fields []*structFieldInfo
+	Fields []*StructFieldInfo
 	// EmbeddedStructs lists every embedded struct, at any depth, not just the
 	// ones embedded directly. Unexported embeds are included too.
-	EmbeddedStructs []embeddedStructInfo
+	EmbeddedStructs []EmbeddedStructInfo
 }
 
 type structOptions struct {
@@ -72,7 +72,7 @@ func WithDefaultTag(tag string) StructOption {
 
 // Embeds reports whether target's type is embedded in this struct, at any
 // depth. target may be a struct value, a pointer to one, or a reflect.Type.
-func (si structInfo) Embeds(target any) bool {
+func (si StructInfo) Embeds(target any) bool {
 	targetType, ok := normalizeEmbeddedStructType(target)
 	if !ok {
 		return false
@@ -87,7 +87,7 @@ func (si structInfo) Embeds(target any) bool {
 	return false
 }
 
-func InspectStruct(s any) (si structInfo, err error) {
+func InspectStruct(s any) (si StructInfo, err error) {
 	if s == nil {
 		return si, ErrNotAStruct
 	}
@@ -101,7 +101,7 @@ func InspectStruct(s any) (si structInfo, err error) {
 
 	// Check if this struct has already been inspected and is in the cache
 	if cached, found := structCache.Load(typ); found {
-		return cached.(structInfo), nil
+		return cached.(StructInfo), nil
 	}
 
 	if typ.Kind() != reflect.Struct {
@@ -117,7 +117,7 @@ func InspectStruct(s any) (si structInfo, err error) {
 		// it to Fields.
 		if field.Anonymous {
 			if embType, ok := derefStructType(field.Type); ok {
-				si.EmbeddedStructs = append(si.EmbeddedStructs, embeddedStructInfo{
+				si.EmbeddedStructs = append(si.EmbeddedStructs, EmbeddedStructInfo{
 					Name: field.Name,
 					Type: embType,
 					Path: slices.Clone(field.Index),
@@ -130,15 +130,15 @@ func InspectStruct(s any) (si structInfo, err error) {
 			continue
 		}
 
-		fi := structFieldInfo{
+		fi := StructFieldInfo{
 			Index:        slices.Clone(field.Index),
 			Name:         field.Name,
 			Type:         field.Type,
 			Kind:         field.Type.Kind(),
 			Tags:         parseStructTag(string(field.Tag)),
 			FromEmbedded: declaringStructType(typ, field.Index),
-			Encode:       pickEncoder(field.Type),
-			Decode:       pickDecoder(field.Type),
+			encode:       pickEncoder(field.Type),
+			decode:       pickDecoder(field.Type),
 		}
 		si.Fields = append(si.Fields, &fi)
 	}
@@ -177,7 +177,7 @@ func NewStruct[T any](opts ...StructOption) (T, error) {
 		if err != nil {
 			return zero, fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
 		}
-		if err := field.Decode(target, field.defaultValue); err != nil {
+		if err := field.decode(target, field.defaultValue); err != nil {
 			return zero, fmt.Errorf("reflector: failed to decode default for field %q with value %q: %w", field.name, field.defaultValue, err)
 		}
 	}
@@ -213,7 +213,7 @@ func ToMap(strct any, opts ...StructOption) (map[string]string, error) {
 			// is no value to read. Skip it.
 			continue
 		}
-		val, err := field.Encode(fv)
+		val, err := field.encode(fv)
 		if err != nil {
 			return nil, fmt.Errorf("reflector: failed to encode field %q: %w", field.name, err)
 		}
@@ -332,7 +332,7 @@ func FillFromMap[T any](dst *T, input map[string]string, opts ...StructOption) e
 		if err != nil {
 			return fmt.Errorf("reflector: failed to address field %q: %w", field.name, err)
 		}
-		if err := field.Decode(target, value); err != nil {
+		if err := field.decode(target, value); err != nil {
 			return fmt.Errorf("reflector: failed to decode field %q with value %q: %w", field.name, value, err)
 		}
 	}
@@ -341,7 +341,7 @@ func FillFromMap[T any](dst *T, input map[string]string, opts ...StructOption) e
 }
 
 type resolvedStructField struct {
-	*structFieldInfo
+	*StructFieldInfo
 	name         string
 	defaultValue string
 	hasDefault   bool
@@ -482,7 +482,7 @@ func parseStructOptions(opts []StructOption) structOptions {
 	return structOpts
 }
 
-func resolveStructFields(fields []*structFieldInfo, opts structOptions) ([]resolvedStructField, error) {
+func resolveStructFields(fields []*StructFieldInfo, opts structOptions) ([]resolvedStructField, error) {
 	resolved := make([]resolvedStructField, 0, len(fields))
 	seen := make(map[string]struct{}, len(fields))
 
@@ -496,7 +496,7 @@ func resolveStructFields(fields []*structFieldInfo, opts structOptions) ([]resol
 		}
 		seen[name] = struct{}{}
 		resolved = append(resolved, resolvedStructField{
-			structFieldInfo: field,
+			StructFieldInfo: field,
 			name:            name,
 			defaultValue:    resolveStructFieldDefault(field, opts),
 			hasDefault:      hasStructFieldDefault(field, opts),
@@ -506,7 +506,7 @@ func resolveStructFields(fields []*structFieldInfo, opts structOptions) ([]resol
 	return resolved, nil
 }
 
-func resolveStructFieldName(field *structFieldInfo, opts structOptions) (string, bool) {
+func resolveStructFieldName(field *StructFieldInfo, opts structOptions) (string, bool) {
 	name := field.Name
 	if opts.nameTag == "" {
 		return name, true
@@ -531,7 +531,7 @@ func resolveStructFieldName(field *structFieldInfo, opts structOptions) (string,
 	}
 }
 
-func resolveStructFieldDefault(field *structFieldInfo, opts structOptions) string {
+func resolveStructFieldDefault(field *StructFieldInfo, opts structOptions) string {
 	if opts.defaultTag == "" {
 		return ""
 	}
@@ -544,7 +544,7 @@ func resolveStructFieldDefault(field *structFieldInfo, opts structOptions) strin
 	return tagValue
 }
 
-func hasStructFieldDefault(field *structFieldInfo, opts structOptions) bool {
+func hasStructFieldDefault(field *StructFieldInfo, opts structOptions) bool {
 	if opts.defaultTag == "" {
 		return false
 	}
