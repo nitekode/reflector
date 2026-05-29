@@ -83,7 +83,19 @@ func InspectFunc(fn any) (fi funcInfo, err error) {
 	return
 }
 
-func Call(fn any, inputs []any, opts ...CallOption) ([]reflect.Value, error) {
+var errorType = reflect.TypeFor[error]()
+
+// Call invokes fn with the given inputs and returns its results as plain
+// values. With WithStringDecoding, string inputs are decoded into the
+// parameter types fn expects.
+//
+// Following Go convention, if fn's last return value is an error it is taken
+// out of the results and returned as the error (nil when fn returned a nil
+// error). So func() error gives an empty result slice plus fn's error,
+// func() (T, error) gives []any{T} plus the error, and func() T gives []any{T}
+// and a nil error. The same error return also carries reflector's own failures
+// (wrong argument count, a decode failure); those are prefixed "reflector:".
+func Call(fn any, inputs []any, opts ...CallOption) ([]any, error) {
 	fi, err := InspectFunc(fn)
 	if err != nil {
 		return nil, err
@@ -142,9 +154,26 @@ func Call(fn any, inputs []any, opts ...CallOption) ([]reflect.Value, error) {
 	}
 
 	fnVal := reflect.ValueOf(fn)
+	var out []reflect.Value
 	if useCallSlice {
-		return fnVal.CallSlice(args), nil
+		out = fnVal.CallSlice(args)
+	} else {
+		out = fnVal.Call(args)
 	}
 
-	return fnVal.Call(args), nil
+	results := make([]any, len(out))
+	for i, v := range out {
+		results[i] = v.Interface()
+	}
+
+	// Split off a trailing error return, if fn has one.
+	if n := len(fi.Returns); n > 0 && fi.Returns[n-1].Implements(errorType) {
+		last := results[n-1]
+		results = results[:n-1]
+		if last != nil {
+			return results, last.(error)
+		}
+	}
+
+	return results, nil
 }

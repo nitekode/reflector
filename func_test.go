@@ -89,11 +89,11 @@ func TestCallDistinguishesSameSignatureFuncs(t *testing.T) {
 		t.Fatalf("Call(b) error = %v", err)
 	}
 
-	if got := out1[0].Interface(); got != 11 {
-		t.Fatalf("a(10) = %v, want 11", got)
+	if out1[0] != 11 {
+		t.Fatalf("a(10) = %v, want 11", out1[0])
 	}
-	if got := out2[0].Interface(); got != 110 {
-		t.Fatalf("b(10) = %v, want 110 (called the wrong function)", got)
+	if out2[0] != 110 {
+		t.Fatalf("b(10) = %v, want 110 (called the wrong function)", out2[0])
 	}
 }
 
@@ -184,12 +184,61 @@ func TestCall(t *testing.T) {
 				t.Fatalf("len(results) = %d, want %d", len(got), len(tt.want))
 			}
 			for i := range got {
-				if value := got[i].Interface(); value != tt.want[i] {
-					t.Fatalf("result[%d] = %v, want %v", i, value, tt.want[i])
+				if got[i] != tt.want[i] {
+					t.Fatalf("result[%d] = %v, want %v", i, got[i], tt.want[i])
 				}
 			}
 		})
 	}
+}
+
+func TestCallSplitsTrailingError(t *testing.T) {
+	funcCache.Clear()
+
+	t.Run("error only, nil", func(t *testing.T) {
+		fn := func() error { return nil }
+		got, err := Call(fn, nil)
+		if err != nil {
+			t.Fatalf("Call() error = %v, want nil", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("results = %v, want empty", got)
+		}
+	})
+
+	t.Run("error only, non-nil", func(t *testing.T) {
+		want := errors.New("boom")
+		fn := func() error { return want }
+		got, err := Call(fn, nil)
+		if !errors.Is(err, want) {
+			t.Fatalf("Call() error = %v, want %v", err, want)
+		}
+		if len(got) != 0 {
+			t.Fatalf("results = %v, want empty", got)
+		}
+	})
+
+	t.Run("value and error", func(t *testing.T) {
+		fn := func(n int) (int, error) { return n * 2, nil }
+		got, err := Call(fn, []any{21})
+		if err != nil {
+			t.Fatalf("Call() error = %v", err)
+		}
+		if len(got) != 1 || got[0] != 42 {
+			t.Fatalf("results = %v, want [42]", got)
+		}
+	})
+
+	t.Run("no error in signature", func(t *testing.T) {
+		fn := func() int { return 7 }
+		got, err := Call(fn, nil)
+		if err != nil {
+			t.Fatalf("Call() error = %v", err)
+		}
+		if len(got) != 1 || got[0] != 7 {
+			t.Fatalf("results = %v, want [7]", got)
+		}
+	})
 }
 
 func TestCallWithStringDecoding(t *testing.T) {
@@ -214,7 +263,7 @@ func TestCallWithStringDecoding(t *testing.T) {
 			t.Fatalf("Call() error = %v", err)
 		}
 
-		if len(got) != 1 || got[0].Interface() != 5 {
+		if len(got) != 1 || got[0] != 5 {
 			t.Fatalf("Call() = %v, want [5]", got)
 		}
 	})
@@ -225,7 +274,7 @@ func TestCallWithStringDecoding(t *testing.T) {
 			t.Fatalf("Call() error = %v", err)
 		}
 
-		if len(got) != 1 || got[0].Interface() != "alice:true:1.5" {
+		if len(got) != 1 || got[0] != "alice:true:1.5" {
 			t.Fatalf("Call() = %v, want [alice:true:1.5]", got)
 		}
 	})
@@ -236,7 +285,7 @@ func TestCallWithStringDecoding(t *testing.T) {
 			t.Fatalf("Call() error = %v", err)
 		}
 
-		if len(got) != 1 || got[0].Interface() != 16 {
+		if len(got) != 1 || got[0] != 16 {
 			t.Fatalf("Call() = %v, want [16]", got)
 		}
 	})
@@ -247,7 +296,7 @@ func TestCallWithStringDecoding(t *testing.T) {
 			t.Fatalf("Call() error = %v", err)
 		}
 
-		if len(got) != 1 || got[0].Interface() != 10 {
+		if len(got) != 1 || got[0] != 10 {
 			t.Fatalf("Call() = %v, want [10]", got)
 		}
 	})
@@ -258,7 +307,7 @@ func TestCallWithStringDecoding(t *testing.T) {
 			t.Fatalf("Call() error = %v", err)
 		}
 
-		if len(got) != 1 || got[0].Interface() != 16 {
+		if len(got) != 1 || got[0] != 16 {
 			t.Fatalf("Call() = %v, want [16]", got)
 		}
 	})

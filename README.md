@@ -62,7 +62,7 @@ func main() {
 	// Call a function with string arguments, decoded to its parameter types.
 	add := func(a, b int) int { return a + b }
 	out, _ := reflector.Call(add, []any{"20", "22"}, reflector.WithStringDecoding())
-	fmt.Println(out[0].Interface()) // 42
+	fmt.Println(out[0]) // 42
 }
 ```
 
@@ -107,9 +107,14 @@ func WithDefaultTag(tag string) StructOption  // read default values from this s
 ### Function calls
 
 ```go
-func Call(fn any, inputs []any, opts ...CallOption) ([]reflect.Value, error)
+func Call(fn any, inputs []any, opts ...CallOption) ([]any, error)
 func WithStringDecoding() CallOption  // decode string inputs into parameter types
 ```
+
+`Call` returns the function's results as plain values. If the function's last
+return value is an error, `Call` hands it back as the `error` and leaves it out
+of the results — so a `func() error` gives you an empty slice and the error, and
+a `func() (T, error)` gives you `[]any{T}` and the error.
 
 ### Errors
 
