@@ -130,15 +130,16 @@ func InspectStruct(s any) (si StructInfo, err error) {
 			continue
 		}
 
+		tags := parseStructTag(string(field.Tag))
 		fi := StructFieldInfo{
 			Index:        slices.Clone(field.Index),
 			Name:         field.Name,
 			Type:         field.Type,
 			Kind:         field.Type.Kind(),
-			Tags:         parseStructTag(string(field.Tag)),
+			Tags:         tags,
 			FromEmbedded: declaringStructType(typ, field.Index),
-			encode:       pickEncoder(field.Type),
-			decode:       pickDecoder(field.Type),
+			encode:       pickEncoder(field.Type, tags),
+			decode:       pickDecoder(field.Type, tags),
 		}
 		si.Fields = append(si.Fields, &fi)
 	}

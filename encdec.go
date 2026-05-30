@@ -57,7 +57,7 @@ func AddEncoder[T any](fn func(v T) (string, error)) {
 	}
 }
 
-func pickEncoder(t reflect.Type) fieldEncoder {
+func pickEncoder(t reflect.Type, tags map[string]string) fieldEncoder {
 	if h, ok := customEncoders[t]; ok {
 		return h
 	}
@@ -68,8 +68,16 @@ func pickEncoder(t reflect.Type) fieldEncoder {
 			return time.Duration(f.Int()).String(), nil
 		}
 	case reflect.TypeFor[time.Time]():
+		layout := tags["time_format"]
+		if layout == "" {
+			layout = tags["layout"]
+		}
 		return func(f reflect.Value) (string, error) {
-			b, err := f.Interface().(time.Time).MarshalText()
+			tm := f.Interface().(time.Time)
+			if layout != "" {
+				return tm.Format(layout), nil
+			}
+			b, err := tm.MarshalText()
 			return string(b), err
 		}
 	case reflect.TypeFor[url.URL]():
@@ -107,7 +115,7 @@ func pickEncoder(t reflect.Type) fieldEncoder {
 	}
 }
 
-func pickDecoder(t reflect.Type) fieldDecoder {
+func pickDecoder(t reflect.Type, tags map[string]string) fieldDecoder {
 	if h, ok := customDecoders[t]; ok {
 		return h
 	}
@@ -123,9 +131,19 @@ func pickDecoder(t reflect.Type) fieldDecoder {
 			return nil
 		}
 	case reflect.TypeFor[time.Time]():
+		layout := tags["time_format"]
+		if layout == "" {
+			layout = tags["layout"]
+		}
 		return func(f reflect.Value, raw string) error {
 			var tm time.Time
-			if err := tm.UnmarshalText([]byte(raw)); err != nil {
+			if layout != "" {
+				parsed, err := time.Parse(layout, raw)
+				if err != nil {
+					return err
+				}
+				tm = parsed
+			} else if err := tm.UnmarshalText([]byte(raw)); err != nil {
 				return err
 			}
 			f.Set(reflect.ValueOf(tm))

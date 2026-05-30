@@ -188,6 +188,16 @@ For `FillFromMap`, `NewStruct` defaults, `ToMap`, and `WithStringDecoding()`:
 `time.Duration` (`time.ParseDuration`, like `1m30s`), `time.Time` (RFC 3339 text),
 `url.URL`, and `net.IP`.
 
+A `time.Time` field can set its own layout with a struct tag: `time_format` if
+present, otherwise `layout`. The value is a literal Go reference-time layout. With
+neither tag the field uses RFC 3339.
+
+```go
+type Event struct {
+	At time.Time `time_format:"2006-01-02"`
+}
+```
+
 Any other type surfaces as `DecodeTypeError` / `EncodeTypeError` unless you register a
 decoder or encoder for it (see below). Unexported fields are never read or written.
 

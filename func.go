@@ -56,7 +56,7 @@ func InspectFunc(fn any) (fi FuncInfo, err error) {
 		fi.Params[i] = FuncParamInfo{
 			Index:  i,
 			Type:   typ.In(i),
-			decode: pickDecoder(typ.In(i)),
+			decode: pickDecoder(typ.In(i), nil),
 		}
 	}
 
@@ -74,7 +74,7 @@ func InspectFunc(fn any) (fi FuncInfo, err error) {
 
 		// Set the last param as variadic
 		fi.Params[len(fi.Params)-1].IsVariadic = true
-		fi.Params[len(fi.Params)-1].decode = pickDecoder(fi.Params[len(fi.Params)-1].Type.Elem())
+		fi.Params[len(fi.Params)-1].decode = pickDecoder(fi.Params[len(fi.Params)-1].Type.Elem(), nil)
 	}
 
 	// Put the inspected func in the cache and prime it

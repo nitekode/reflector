@@ -252,6 +252,145 @@ func TestCustomConverterOverridesStandardType(t *testing.T) {
 	}
 }
 
+func TestTimeFormatTag(t *testing.T) {
+	structCache.Clear()
+	clearCustomConverters()
+
+	t.Run("time_format", func(t *testing.T) {
+		structCache.Clear()
+		type event struct {
+			At time.Time `time_format:"2006-01-02"`
+		}
+
+		var e event
+		if err := FillFromMap(&e, map[string]string{"At": "2026-05-30"}); err != nil {
+			t.Fatalf("FillFromMap() error = %v", err)
+		}
+		want, _ := time.Parse("2006-01-02", "2026-05-30")
+		if !e.At.Equal(want) {
+			t.Fatalf("At = %v, want %v", e.At, want)
+		}
+
+		got, err := ToMap(e)
+		if err != nil {
+			t.Fatalf("ToMap() error = %v", err)
+		}
+		if got["At"] != "2026-05-30" {
+			t.Fatalf("ToMap()[At] = %q, want %q", got["At"], "2026-05-30")
+		}
+	})
+
+	t.Run("layout fallback", func(t *testing.T) {
+		structCache.Clear()
+		type event struct {
+			At time.Time `layout:"2006-01-02 15:04"`
+		}
+
+		var e event
+		if err := FillFromMap(&e, map[string]string{"At": "2026-05-30 14:30"}); err != nil {
+			t.Fatalf("FillFromMap() error = %v", err)
+		}
+		got, err := ToMap(e)
+		if err != nil {
+			t.Fatalf("ToMap() error = %v", err)
+		}
+		if got["At"] != "2026-05-30 14:30" {
+			t.Fatalf("ToMap()[At] = %q, want %q", got["At"], "2026-05-30 14:30")
+		}
+	})
+
+	t.Run("time_format wins over layout", func(t *testing.T) {
+		structCache.Clear()
+		type event struct {
+			At time.Time `time_format:"2006-01-02" layout:"2006-01-02 15:04"`
+		}
+
+		var e event
+		if err := FillFromMap(&e, map[string]string{"At": "2026-05-30"}); err != nil {
+			t.Fatalf("FillFromMap() error = %v", err)
+		}
+		got, err := ToMap(e)
+		if err != nil {
+			t.Fatalf("ToMap() error = %v", err)
+		}
+		if got["At"] != "2026-05-30" {
+			t.Fatalf("ToMap()[At] = %q, want %q", got["At"], "2026-05-30")
+		}
+	})
+
+	t.Run("no tag uses RFC 3339", func(t *testing.T) {
+		structCache.Clear()
+		type event struct {
+			At time.Time
+		}
+
+		var e event
+		if err := FillFromMap(&e, map[string]string{"At": "2026-05-30T12:00:00Z"}); err != nil {
+			t.Fatalf("FillFromMap() error = %v", err)
+		}
+		got, err := ToMap(e)
+		if err != nil {
+			t.Fatalf("ToMap() error = %v", err)
+		}
+		if got["At"] != "2026-05-30T12:00:00Z" {
+			t.Fatalf("ToMap()[At] = %q, want %q", got["At"], "2026-05-30T12:00:00Z")
+		}
+	})
+
+	t.Run("two fields, different formats", func(t *testing.T) {
+		structCache.Clear()
+		type event struct {
+			Day   time.Time `time_format:"2006-01-02"`
+			Clock time.Time `time_format:"15:04"`
+		}
+
+		in := map[string]string{
+			"Day":   "2026-05-30",
+			"Clock": "14:30",
+		}
+
+		var e event
+		if err := FillFromMap(&e, in); err != nil {
+			t.Fatalf("FillFromMap() error = %v", err)
+		}
+		wantDay, _ := time.Parse("2006-01-02", "2026-05-30")
+		if !e.Day.Equal(wantDay) {
+			t.Errorf("Day = %v, want %v", e.Day, wantDay)
+		}
+		wantClock, _ := time.Parse("15:04", "14:30")
+		if !e.Clock.Equal(wantClock) {
+			t.Errorf("Clock = %v, want %v", e.Clock, wantClock)
+		}
+
+		got, err := ToMap(e)
+		if err != nil {
+			t.Fatalf("ToMap() error = %v", err)
+		}
+		for k, v := range in {
+			if got[k] != v {
+				t.Errorf("ToMap()[%q] = %q, want %q", k, got[k], v)
+			}
+		}
+	})
+
+	t.Run("bad input", func(t *testing.T) {
+		structCache.Clear()
+		type event struct {
+			At time.Time `time_format:"2006-01-02"`
+		}
+
+		var e event
+		err := FillFromMap(&e, map[string]string{"At": "30 May 2026"})
+		var fieldErr *FieldError
+		if !errors.As(err, &fieldErr) {
+			t.Fatalf("FillFromMap() error = %v, want *FieldError", err)
+		}
+		if fieldErr.Field != "At" {
+			t.Fatalf("FieldError.Field = %q, want %q", fieldErr.Field, "At")
+		}
+	})
+}
+
 func TestDurationDefault(t *testing.T) {
 	structCache.Clear()
 	clearCustomConverters()
