@@ -13,7 +13,7 @@ reflector.FillFromMap(&cfg, values, reflector.WithNameTag("env"))
 - **One call to decode, one to encode.** `FillFromMap` turns a `map[string]string` into a struct; `ToMap` turns it back. Field names and defaults come from struct tags.
 - **Embedded structs just work.** Fields promoted from embedded structs are flattened and written through to the right place, at any depth. Build one struct from the smaller pieces it embeds.
 - **Call functions dynamically.** Invoke any function from a `[]any`; string arguments are decoded to the types it expects, and a trailing `error` return comes back as a normal `error`.
-- **Teach it new types.** Register a converter once with `AddDecoder` / `AddEncoder` and any field of that type is handled everywhere, including types whose built-in kind is an int or string, like `time.Duration`.
+- **Teach it new types.** Register a converter once with `AddDecoder` / `AddEncoder` and any field of that type is handled everywhere, including your own named types whose underlying kind is an int or string.
 - **Errors name the field.** A failed decode returns a `*FieldError` with the field name and path. `errors.As` still reaches the underlying cause.
 - **Cached and dependency-free.** Type inspection is memoized per type, and it uses nothing but the standard library.
 
@@ -184,7 +184,9 @@ field. Fields without the tag fall back to their Go field name.
 ### Supported types
 
 For `FillFromMap`, `NewStruct` defaults, `ToMap`, and `WithStringDecoding()`:
-`string`, `bool`, `int`/`int8`/`int16`/`int32`/`int64`, `float32`/`float64`.
+`string`, `bool`, `int`/`int8`/`int16`/`int32`/`int64`, `float32`/`float64`,
+`time.Duration` (`time.ParseDuration`, like `1m30s`), `time.Time` (RFC 3339 text),
+`url.URL`, and `net.IP`.
 
 Any other type surfaces as `DecodeTypeError` / `EncodeTypeError` unless you register a
 decoder or encoder for it (see below). Unexported fields are never read or written.
@@ -195,24 +197,37 @@ Register a decoder and encoder for a type and reflector uses them everywhere tha
 appears:
 
 ```go
-reflector.AddDecoder(func(s string) (time.Duration, error) {
-	return time.ParseDuration(s)
+type Level int
+
+const (
+	LevelLow Level = iota
+	LevelHigh
+)
+
+reflector.AddDecoder(func(s string) (Level, error) {
+	switch s {
+	case "low":
+		return LevelLow, nil
+	case "high":
+		return LevelHigh, nil
+	}
+	return 0, fmt.Errorf("unknown level %q", s)
 })
-reflector.AddEncoder(func(d time.Duration) (string, error) {
-	return d.String(), nil
+reflector.AddEncoder(func(l Level) (string, error) {
+	return [...]string{"low", "high"}[l], nil
 })
 
 var cfg struct {
-	Timeout time.Duration
+	Level Level
 }
-reflector.FillFromMap(&cfg, map[string]string{"Timeout": "1m30s"}) // cfg.Timeout == 90s
-out, _ := reflector.ToMap(cfg)                                     // out["Timeout"] == "1m30s"
+reflector.FillFromMap(&cfg, map[string]string{"Level": "high"}) // cfg.Level == LevelHigh
+out, _ := reflector.ToMap(cfg)                                   // out["Level"] == "high"
 ```
 
 A registered decoder or encoder wins over the built-in handling for that type, so it
-works even for named types whose underlying kind is a built-in one (`time.Duration` is
-an `int64`, a custom `type Env string` is a string). Registering a type again replaces
-the earlier one.
+works even for named types whose underlying kind is a built-in one (`Level` above is an
+`int`, a custom `type Env string` is a string) and it overrides the built-in handling
+for types like `time.Time`. Registering a type again replaces the earlier one.
 
 These registrations live in a package-level registry that is read when a struct is first
 inspected, so register your custom types before the first call that uses them, in

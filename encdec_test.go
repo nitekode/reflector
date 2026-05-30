@@ -2,6 +2,8 @@ package reflector
 
 import (
 	"errors"
+	"net"
+	"net/url"
 	"reflect"
 	"testing"
 	"time"
@@ -111,6 +113,148 @@ func TestCustomDecoderAppliesToDefaults(t *testing.T) {
 	AddDecoder(func(raw string) (time.Duration, error) {
 		return time.ParseDuration(raw)
 	})
+
+	type config struct {
+		Timeout time.Duration `default:"5s"`
+	}
+
+	got, err := NewStruct[config](WithDefaultTag("default"))
+	if err != nil {
+		t.Fatalf("NewStruct() error = %v", err)
+	}
+	if got.Timeout != 5*time.Second {
+		t.Fatalf("Timeout = %v, want %v", got.Timeout, 5*time.Second)
+	}
+}
+
+func TestDurationTimeURLIPRoundTrip(t *testing.T) {
+	structCache.Clear()
+	clearCustomConverters()
+
+	type config struct {
+		Timeout  time.Duration
+		Start    time.Time
+		Endpoint url.URL
+		Bind     net.IP
+	}
+
+	in := map[string]string{
+		"Timeout":  "1m30s",
+		"Start":    "2026-05-30T12:00:00Z",
+		"Endpoint": "https://example.com/path?q=1",
+		"Bind":     "192.168.0.1",
+	}
+
+	var cfg config
+	if err := FillFromMap(&cfg, in); err != nil {
+		t.Fatalf("FillFromMap() error = %v", err)
+	}
+
+	if cfg.Timeout != 90*time.Second {
+		t.Errorf("Timeout = %v, want %v", cfg.Timeout, 90*time.Second)
+	}
+	wantStart, _ := time.Parse(time.RFC3339, "2026-05-30T12:00:00Z")
+	if !cfg.Start.Equal(wantStart) {
+		t.Errorf("Start = %v, want %v", cfg.Start, wantStart)
+	}
+	if cfg.Endpoint.String() != "https://example.com/path?q=1" {
+		t.Errorf("Endpoint = %q, want %q", cfg.Endpoint.String(), "https://example.com/path?q=1")
+	}
+	if !cfg.Bind.Equal(net.ParseIP("192.168.0.1")) {
+		t.Errorf("Bind = %v, want %v", cfg.Bind, net.ParseIP("192.168.0.1"))
+	}
+
+	got, err := ToMap(cfg)
+	if err != nil {
+		t.Fatalf("ToMap() error = %v", err)
+	}
+	want := map[string]string{
+		"Timeout":  "1m30s",
+		"Start":    "2026-05-30T12:00:00Z",
+		"Endpoint": "https://example.com/path?q=1",
+		"Bind":     "192.168.0.1",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("ToMap()[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestDurationTimeIPDecodeErrors(t *testing.T) {
+	structCache.Clear()
+	clearCustomConverters()
+
+	tests := []struct {
+		name  string
+		field string
+		input map[string]string
+	}{
+		{"duration", "Timeout", map[string]string{"Timeout": "not-a-duration"}},
+		{"time", "Start", map[string]string{"Start": "not-a-timestamp"}},
+		{"ip", "Bind", map[string]string{"Bind": "not-an-ip"}},
+	}
+
+	type config struct {
+		Timeout time.Duration
+		Start   time.Time
+		Bind    net.IP
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg config
+			err := FillFromMap(&cfg, tt.input)
+			var fieldErr *FieldError
+			if !errors.As(err, &fieldErr) {
+				t.Fatalf("FillFromMap() error = %v, want *FieldError", err)
+			}
+			if fieldErr.Field != tt.field {
+				t.Fatalf("FieldError.Field = %q, want %q", fieldErr.Field, tt.field)
+			}
+		})
+	}
+}
+
+func TestCustomConverterOverridesStandardType(t *testing.T) {
+	structCache.Clear()
+	clearCustomConverters()
+
+	// A non-RFC3339 layout, only reachable if the user registration wins over the
+	// default time.Time handling.
+	const layout = "2006-01-02"
+	AddDecoder(func(raw string) (time.Time, error) {
+		return time.Parse(layout, raw)
+	})
+	AddEncoder(func(tm time.Time) (string, error) {
+		return tm.Format(layout), nil
+	})
+
+	type config struct {
+		Start time.Time
+	}
+
+	var cfg config
+	if err := FillFromMap(&cfg, map[string]string{"Start": "2026-05-30"}); err != nil {
+		t.Fatalf("FillFromMap() error = %v", err)
+	}
+	want, _ := time.Parse(layout, "2026-05-30")
+	if !cfg.Start.Equal(want) {
+		t.Fatalf("Start = %v, want %v", cfg.Start, want)
+	}
+
+	got, err := ToMap(cfg)
+	if err != nil {
+		t.Fatalf("ToMap() error = %v", err)
+	}
+	if got["Start"] != "2026-05-30" {
+		t.Fatalf("ToMap()[Start] = %q, want %q", got["Start"], "2026-05-30")
+	}
+}
+
+func TestDurationDefault(t *testing.T) {
+	structCache.Clear()
+	clearCustomConverters()
 
 	type config struct {
 		Timeout time.Duration `default:"5s"`

@@ -1,8 +1,12 @@
 package reflector
 
 import (
+	"fmt"
+	"net"
+	"net/url"
 	"reflect"
 	"strconv"
+	"time"
 )
 
 type fieldEncoder func(field reflect.Value) (string, error)
@@ -57,6 +61,28 @@ func pickEncoder(t reflect.Type) fieldEncoder {
 	if h, ok := customEncoders[t]; ok {
 		return h
 	}
+
+	switch t {
+	case reflect.TypeFor[time.Duration]():
+		return func(f reflect.Value) (string, error) {
+			return time.Duration(f.Int()).String(), nil
+		}
+	case reflect.TypeFor[time.Time]():
+		return func(f reflect.Value) (string, error) {
+			b, err := f.Interface().(time.Time).MarshalText()
+			return string(b), err
+		}
+	case reflect.TypeFor[url.URL]():
+		return func(f reflect.Value) (string, error) {
+			u := f.Interface().(url.URL)
+			return u.String(), nil
+		}
+	case reflect.TypeFor[net.IP]():
+		return func(f reflect.Value) (string, error) {
+			return f.Interface().(net.IP).String(), nil
+		}
+	}
+
 	switch t.Kind() {
 	case reflect.String:
 		return func(f reflect.Value) (string, error) {
@@ -85,6 +111,46 @@ func pickDecoder(t reflect.Type) fieldDecoder {
 	if h, ok := customDecoders[t]; ok {
 		return h
 	}
+
+	switch t {
+	case reflect.TypeFor[time.Duration]():
+		return func(f reflect.Value, raw string) error {
+			d, err := time.ParseDuration(raw)
+			if err != nil {
+				return err
+			}
+			f.SetInt(int64(d))
+			return nil
+		}
+	case reflect.TypeFor[time.Time]():
+		return func(f reflect.Value, raw string) error {
+			var tm time.Time
+			if err := tm.UnmarshalText([]byte(raw)); err != nil {
+				return err
+			}
+			f.Set(reflect.ValueOf(tm))
+			return nil
+		}
+	case reflect.TypeFor[url.URL]():
+		return func(f reflect.Value, raw string) error {
+			u, err := url.Parse(raw)
+			if err != nil {
+				return err
+			}
+			f.Set(reflect.ValueOf(*u))
+			return nil
+		}
+	case reflect.TypeFor[net.IP]():
+		return func(f reflect.Value, raw string) error {
+			ip := net.ParseIP(raw)
+			if ip == nil {
+				return fmt.Errorf("invalid IP address %q", raw)
+			}
+			f.Set(reflect.ValueOf(ip))
+			return nil
+		}
+	}
+
 	switch t.Kind() {
 	case reflect.String:
 		return func(f reflect.Value, raw string) error {
