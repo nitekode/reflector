@@ -11,15 +11,19 @@ var funcCache sync.Map
 type FuncParamInfo struct {
 	Index      int
 	Type       reflect.Type
+	Kind       reflect.Kind
 	IsVariadic bool
 	decode     fieldDecoder
 }
 
 type FuncInfo struct {
-	Params     []FuncParamInfo
-	Returns    []reflect.Type
-	IsVariadic bool
-	MinArgs    int
+	Params  []FuncParamInfo
+	Returns []reflect.Type
+	// ReturnsError is set when fn's last return value is an error, following
+	// the Go convention that Call relies on to peel it off.
+	ReturnsError bool
+	IsVariadic   bool
+	MinArgs      int
 }
 
 type callOptions struct {
@@ -56,6 +60,7 @@ func InspectFunc(fn any) (fi FuncInfo, err error) {
 		fi.Params[i] = FuncParamInfo{
 			Index:  i,
 			Type:   typ.In(i),
+			Kind:   typ.In(i).Kind(),
 			decode: pickDecoder(typ.In(i), nil),
 		}
 	}
@@ -63,6 +68,10 @@ func InspectFunc(fn any) (fi FuncInfo, err error) {
 	fi.Returns = make([]reflect.Type, typ.NumOut())
 	for i := 0; i < typ.NumOut(); i++ {
 		fi.Returns[i] = typ.Out(i)
+	}
+
+	if n := len(fi.Returns); n > 0 && fi.Returns[n-1].Implements(errorType) {
+		fi.ReturnsError = true
 	}
 
 	fi.IsVariadic = typ.IsVariadic()
@@ -167,7 +176,8 @@ func Call(fn any, inputs []any, opts ...CallOption) ([]any, error) {
 	}
 
 	// Split off a trailing error return, if fn has one.
-	if n := len(fi.Returns); n > 0 && fi.Returns[n-1].Implements(errorType) {
+	if fi.ReturnsError {
+		n := len(fi.Returns)
 		last := results[n-1]
 		results = results[:n-1]
 		if last != nil {

@@ -115,10 +115,11 @@ si.EmbeddedStructs   // every embedded struct, at any depth
 si.Embeds(Logging{}) // true if Logging is embedded anywhere in App
 
 fi, _ := reflector.InspectFunc(handler)
-fi.Params     // parameter types
-fi.Returns    // return types
-fi.IsVariadic // whether the last parameter is variadic
-fi.MinArgs    // how many arguments are required
+fi.Params           // parameters, each with Type and Kind
+fi.Returns          // return types
+fi.ReturnsError     // whether the last return value is an error
+fi.IsVariadic       // whether the last parameter is variadic
+fi.MinArgs          // how many arguments are required
 ```
 
 Inspection is cached per type. `StructFieldInfo` and `EmbeddedStructInfo` are
